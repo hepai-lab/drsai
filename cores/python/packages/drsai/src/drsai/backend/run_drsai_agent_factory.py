@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -562,6 +563,8 @@ def create_agent(
                 param_type=capabilities.reasoning.param_type,
             ),
             vision=capabilities.vision,
+            # TOML/Provider declaration wins over any stale YAML metadata.
+            use_responses_api=capabilities.use_responses_api,
         )
 
     # Default alias: explicit arg > env var > cli_cfg > module default.
@@ -668,10 +671,10 @@ def create_agent(
             cwd = str(WORKDIR)
     user_storage_dir = str(WORKDIR / effective_user_id)
 
-    # OpenAI new-series models (gpt-5.x, gpt-4.1, o1/o3/o4) reject 'max_tokens',
+    # OpenAI new-series models (gpt-5.x, gpt-6.x, gpt-4.1, o1/o3/o4) reject 'max_tokens',
     # they require 'max_completion_tokens' instead.  Third-party OpenAI-compatible
     # APIs (DeepSeek, GLM, etc.) only accept 'max_tokens'.
-    _OPENAI_NEW_MODEL_PREFIXES = ("gpt-5", "gpt-4.1", "o1", "o3", "o4")
+    _OPENAI_NEW_MODEL_PREFIXES = ("gpt-5", "gpt-6", "gpt-4.1", "o1", "o3", "o4")
 
     def set_model_client(
         name: Optional[str] = resolved_config_name,
@@ -703,10 +706,14 @@ def create_agent(
             active_capabilities = active_user_model.capabilities
             # Prefer yaml entry for model metadata (token_limit, max_tokens,
             # vision, reasoning) when available; fall back to config.toml
-            # capabilities for unknown models.
+            # capabilities for unknown models. The wire transport is the one
+            # exception: a config.toml/Provider declaration always wins, since
+            # the YAML catalog cannot know a user's endpoint.
             yaml_entry = llm_mode_config.get(alias) or llm_mode_config.get(active_user_model.model)
             if yaml_entry is not None:
                 entry = yaml_entry
+                if active_capabilities.use_responses_api is not None:
+                    entry = replace(entry, use_responses_api=active_capabilities.use_responses_api)
             else:
                 entry = ModelEntry(
                     model=active_user_model.model,
@@ -719,6 +726,7 @@ def create_agent(
                         param_type=active_capabilities.reasoning.param_type,
                     ),
                     vision=active_capabilities.vision,
+                    use_responses_api=active_capabilities.use_responses_api,
                 )
         else:
             entry = llm_mode_config.get(alias)
@@ -859,11 +867,14 @@ def create_agent(
         needs_max_completion = any(
             model_suffix.startswith(prefix) for prefix in _OPENAI_NEW_MODEL_PREFIXES
         )
-        # The model declaration owns the wire protocol. The Responses API is
-        # only available on OpenAI-native new-series endpoints; third-party
-        # OpenAI-compatible gateways (HEPAI for kimi/glm/deepseek) only
-        # implement Chat Completions. Per-model override (entry.use_responses_api)
-        # wins; otherwise infer from the model name.
+        # Wire transport for OpenAI-protocol models. Precedence:
+        #   1. the model's own declaration (config.toml `models.<id>`, or a YAML
+        #      catalog entry) — `entry.use_responses_api`;
+        #   2. the Provider-wide default (resolved into the same field);
+        #   3. model-name inference — new-series OpenAI models need the
+        #      Responses API, everyone else stays on Chat Completions.
+        # The client still falls back to Chat Completions automatically on a
+        # clean endpoint-level rejection (404/405/501) before any output.
         if client_type != "openai":
             use_responses_api = False
         elif entry.use_responses_api is not None:

@@ -753,9 +753,16 @@ export interface DesktopVoiceTranscriptionStartResult {
   acceptedAt: string;
 }
 
+export type DesktopVoiceRuntimeReasonCode =
+  | "ready"
+  | "unconfigured"
+  | "auth_required"
+  | "gateway_unavailable";
+
 export interface DesktopVoiceRuntimeStatus {
   runtimeId: DesktopVoiceRuntimeId;
   state: "ready" | "unavailable" | "auth_required" | "degraded";
+  reasonCode?: DesktopVoiceRuntimeReasonCode;
   supportedMimeTypes: string[];
   maxBytes: number;
   maxDurationSeconds: number;
@@ -4138,7 +4145,8 @@ export interface MyDrSaiProviderReference {
     | "agent_image_model_policy"
     | "agent_image_understanding_model_policy"
     | "agent_text_to_speech_model_policy"
-    | "agent_speech_to_text_model_policy";
+    | "agent_speech_to_text_model_policy"
+    | "agent_realtime_voice_model_policy";
   id: string;
   label: string;
   model_id: string;
@@ -4148,6 +4156,20 @@ export interface MyDrSaiProviderDeletePreflight {
   provider: string;
   references: MyDrSaiProviderReference[];
   can_delete: boolean;
+}
+
+export interface MyDrSaiModelDeletePreflight extends MyDrSaiProviderDeletePreflight {
+  model_id: string;
+  origin: ModelOwnership;
+  action: "delete" | "disable";
+}
+
+export interface MyDrSaiModelDeleteResult {
+  ok: boolean;
+  provider: string;
+  model_id: string;
+  action: "delete" | "disable";
+  revision?: string;
 }
 
 export interface MyDrSaiModelProviderDraft {
@@ -4325,7 +4347,11 @@ export interface DesktopThreadHistoryState {
   correctedItems?: number;
   warningCount?: number;
   message?: string;
+  /** Backend import continuation; never pass this to OAEP snapshot pagination. */
   nextCursor?: string | null;
+  /** OAEP checkpoint window continuation, independent of backend import. */
+  oaepNextCursor?: string | null;
+  oaepHasMore?: boolean;
   truncated?: boolean;
 }
 
@@ -4352,7 +4378,10 @@ export interface DesktopThreadSnapshotRequest {
   forceFresh?: boolean;
   minimumSequence?: number;
   expectedGeneration?: number;
+  /** Backend history import cursor (legacy name retained for compatibility). */
   historyCursor?: string;
+  /** Fetch exactly one earlier OAEP checkpoint window. */
+  oaepHistoryCursor?: string;
 }
 
 export interface DesktopThreadSnapshotPatchEvent {
@@ -4435,6 +4464,15 @@ export interface DesktopRuntimeLogEvent {
 export interface DesktopThreadCatalogEvent {
   thread: DesktopThread;
   source: "runtime-session";
+  /**
+   * True when the publisher authoritatively observed this Thread's run reach a
+   * terminal state. The renderer uses it to settle a cached snapshot of a
+   * conversation that finished while the user was reading another one. It must
+   * NOT be set for rows that merely default to "idle" (a freshly materialized
+   * ghost row, or the Runtime catalog's own default), or the renderer would
+   * wipe the live progress of a still-streaming conversation.
+   */
+  settled?: boolean;
 }
 
 export interface DesktopThreadContentSearchRequest {
@@ -6147,6 +6185,8 @@ export interface DesktopApi {
   discoverMyDrSaiProviderModels(provider: string, refresh?: boolean, draft?: MyDrSaiModelProviderDraft): Promise<MyDrSaiModelDiscoveryResult>;
   preflightMyDrSaiModelProviderDeletion(provider: string): Promise<MyDrSaiProviderDeletePreflight>;
   deleteMyDrSaiModelProvider(provider: string, deleteCredential?: boolean): Promise<{ ok: boolean; active?: string }>;
+  preflightMyDrSaiModelDeletion(provider: string, modelId: string): Promise<MyDrSaiModelDeletePreflight>;
+  deleteMyDrSaiModel(provider: string, modelId: string, expectedRevision?: string): Promise<MyDrSaiModelDeleteResult>;
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;
   updateThread(request: UpdateThreadRequest): Promise<DesktopThread>;
   deleteThread(threadId: string): Promise<boolean>;
@@ -6389,6 +6429,7 @@ export interface DesktopApi {
   prepareReusableTaskRun(
     request: DesktopReusableTaskRunPrepareRequest,
   ): Promise<DesktopReusableTaskRunRecipe>;
+  getCompletionNotificationPreference(): Promise<CompletionNotificationPreference>;
   setCompletionNotificationPreference(
     preference: CompletionNotificationPreference,
   ): Promise<CompletionNotificationPreference>;
@@ -6641,4 +6682,15 @@ export interface DesktopApi {
   gfsClearConfig(): Promise<GfsConfigClearResult>;
   /** P1: Send renderer FPS health report to main process for adaptive backpressure control. */
   sendRenderHealthReport(report: { fps: number; tier: "healthy" | "degraded" | "critical" }): void;
+  /** Sync Windows title-bar overlay / window chrome with the active renderer theme. */
+  setWindowChromeAppearance(chrome: {
+    color: string;
+    symbolColor: string;
+    backgroundColor: string;
+  }): Promise<boolean>;
+  windowMinimize(): Promise<boolean>;
+  windowToggleMaximize(): Promise<boolean>;
+  windowClose(): Promise<boolean>;
+  getWindowMaximized(): Promise<boolean>;
+  onWindowMaximizedChanged(callback: (maximized: boolean) => void): () => void;
 }

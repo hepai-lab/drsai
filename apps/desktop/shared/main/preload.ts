@@ -689,6 +689,10 @@ const api: DesktopApi = {
     provider: string, deleteCredential?: boolean,
   ): Promise<{ ok: boolean; active?: string }> =>
     ipcRenderer.invoke("desktop:delete-my-drsai-model-provider", provider, deleteCredential),
+  preflightMyDrSaiModelDeletion: (provider, modelId) =>
+    ipcRenderer.invoke("desktop:preflight-my-drsai-model-deletion", provider, modelId),
+  deleteMyDrSaiModel: (provider, modelId, expectedRevision) =>
+    ipcRenderer.invoke("desktop:delete-my-drsai-model", provider, modelId, expectedRevision),
   createThread: (request: CreateThreadRequest) =>
     ipcRenderer.invoke("desktop:create-thread", request),
   updateThread: (request: UpdateThreadRequest) =>
@@ -1394,6 +1398,8 @@ const api: DesktopApi = {
     request: DesktopReusableTaskRunPrepareRequest,
   ): Promise<DesktopReusableTaskRunRecipe> =>
     ipcRenderer.invoke("desktop:reusable-task-run-prepare", request),
+  getCompletionNotificationPreference: (): Promise<CompletionNotificationPreference> =>
+    ipcRenderer.invoke("desktop:completion-notification-preference-get"),
   setCompletionNotificationPreference: (
     preference: CompletionNotificationPreference,
   ): Promise<CompletionNotificationPreference> =>
@@ -1703,6 +1709,30 @@ const api: DesktopApi = {
   /** P1: Send renderer FPS health report to main process for adaptive backpressure control. */
   sendRenderHealthReport: (report: { fps: number; tier: "healthy" | "degraded" | "critical" }): void => {
     ipcRenderer.send("desktop:render-health", report);
+  },
+  setWindowChromeAppearance: (chrome: {
+    color: string;
+    symbolColor: string;
+    backgroundColor: string;
+  }): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:window-chrome-appearance", chrome),
+  windowMinimize: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:window-minimize"),
+  windowToggleMaximize: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:window-toggle-maximize"),
+  windowClose: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:window-close"),
+  getWindowMaximized: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:window-is-maximized"),
+  onWindowMaximizedChanged: (callback: (maximized: boolean) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, maximized: boolean) => {
+      callback(Boolean(maximized));
+    };
+    ipcRenderer.on("desktop:window-maximized-changed", listener);
+    void ipcRenderer.invoke("desktop:window-is-maximized").then((maximized: boolean) => {
+      callback(Boolean(maximized));
+    }).catch(() => undefined);
+    return () => ipcRenderer.removeListener("desktop:window-maximized-changed", listener);
   },
 };
 

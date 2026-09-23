@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
+import time
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-import asyncio
 from typing import Any, Protocol
 from uuid import uuid4
 
 import aiohttp
+from loguru import logger
 
 from drsai.backend.runtime.agent import AgentDefinitionStore, RuntimeExecutionError
 from drsai.relay.security import redact_secrets
@@ -25,7 +27,18 @@ _OAEP_RELAY_BATCH_BYTES = max(
     min(8 * 1024 * 1024, int(os.environ.get("OPENDRSAI_RELAY_OAEP_BATCH_BYTES", str(512 * 1024)))),
 )
 _OAEP_RELAY_SESSION_BUDGET = max(
-    1, min(8, int(os.environ.get("OPENDRSAI_RELAY_OAEP_SESSION_BUDGET", "2")))
+    1, min(64, int(os.environ.get("OPENDRSAI_RELAY_OAEP_SESSION_BUDGET", "16")))
+)
+# Active Runs are the latency-sensitive path: they hold a reserved share of the
+# budget so a freshly created Session can never be starved by idle Sessions that
+# merely have unpublished history.
+_OAEP_RELAY_ACTIVE_RESERVED = max(
+    1, int(os.environ.get("OPENDRSAI_RELAY_OAEP_ACTIVE_RESERVED", "8"))
+)
+# Sessions waiting longer than this are surfaced as degraded instead of being
+# silently dropped from the poll window.
+_OAEP_RELAY_STARVATION_ALERT_SECONDS = max(
+    1.0, float(os.environ.get("OPENDRSAI_RELAY_OAEP_STARVATION_ALERT_SECONDS", "30"))
 )
 _OAEP_BASELINE_VERSION = "1"
 _RUN_EVENT_TYPE_COMPAT = {
@@ -117,6 +130,14 @@ class GatewayRuntimeControlHandler:
         self._relay_oaep_event_cursors: dict[str, int] = {}
         self._relay_session_scan_offsets: dict[str, int] = {}
         self._relay_terminal_runs: set[str] = set()
+        self._oaep_window_metrics: dict[str, Any] = {
+            "eligible": 0,
+            "polled": 0,
+            "starved": 0,
+            "max_wait_seconds": 0.0,
+            "degraded": False,
+        }
+        self._oaep_starvation_since: float | None = None
         self._session_waterlines_available = False
         self._oaep_waterlines_available = False
         self._approval_decision_lock = asyncio.Lock()
@@ -504,6 +525,13 @@ class GatewayRuntimeControlHandler:
         pending_session_ids: list[str],
         active_workspace_ids: set[str],
     ) -> list[dict[str, str]] | None:
+        """Bind pending canonical Rows to their Workspace for the latency path.
+
+        The Window is ordered by the oldest unpublished Row per Session, not by
+        Session identity: an unordered ``LIMIT`` returned a fixed
+        lexicographic window, so the same Sessions were polled forever and any
+        Session sorted past the cut was never forwarded at all.
+        """
         if not pending_session_ids or not active_workspace_ids or not self.journal_database.is_file():
             return []
         placeholders = ",".join("?" for _ in pending_session_ids)
@@ -511,10 +539,19 @@ class GatewayRuntimeControlHandler:
         try:
             with sqlite3.connect(self.journal_database, timeout=5) as journal:
                 rows = journal.execute(
-                    "SELECT session_id,workspace_id FROM runtime_sessions "
-                    f"WHERE session_id IN ({placeholders}) "
-                    f"AND workspace_id IN ({workspace_placeholders}) LIMIT ?",
+                    "SELECT s.session_id,s.workspace_id,"
+                    "COALESCE(j.peeled_at,s.session_id) AS wait_key "
+                    "FROM runtime_sessions s "
+                    "LEFT JOIN ("
+                    "SELECT session_id,MIN(created_at) AS peeled_at "
+                    "FROM runtime_session_journal "
+                    f"WHERE session_id IN ({placeholders}) GROUP BY session_id"
+                    ") j ON j.session_id=s.session_id "
+                    f"WHERE s.session_id IN ({placeholders}) "
+                    f"AND s.workspace_id IN ({workspace_placeholders}) "
+                    "ORDER BY wait_key ASC, s.session_id ASC LIMIT ?",
                     (
+                        *pending_session_ids,
                         *pending_session_ids,
                         *active_workspace_ids,
                         _OAEP_RELAY_SESSION_BUDGET,
@@ -523,9 +560,91 @@ class GatewayRuntimeControlHandler:
         except sqlite3.Error:
             return None
         return [
-            {"session_id": str(row[0]), "workspace_id": str(row[1])}
+            {
+                "session_id": str(row[0]),
+                "workspace_id": str(row[1]),
+                "wait_key": str(row[2]),
+            }
             for row in rows
         ]
+
+    def _active_oaep_session_ids(self) -> set[str]:
+        """Sessions with a non-terminal Run — the latency-sensitive set."""
+        if not self.journal_database.is_file():
+            return set()
+        try:
+            with sqlite3.connect(self.journal_database, timeout=5) as journal:
+                rows = journal.execute(
+                    "SELECT DISTINCT session_id FROM runtime_runs "
+                    "WHERE status IN ('queued','running','waiting_approval')"
+                ).fetchall()
+        except sqlite3.Error:
+            return set()
+        return {str(row[0]) for row in rows}
+
+    def _record_oaep_window(
+        self,
+        eligible: list[dict[str, Any]],
+        window: list[dict[str, Any]],
+    ) -> None:
+        """Publish starvation so a silently narrowed Window becomes visible."""
+        starved = len(eligible) - len(window)
+        self._oaep_window_metrics["eligible"] = len(eligible)
+        self._oaep_window_metrics["polled"] = len(window)
+        self._oaep_window_metrics["starved"] = starved
+        if starved <= 0:
+            self._oaep_starvation_since = None
+            self._oaep_window_metrics["max_wait_seconds"] = 0.0
+            return
+        now = time.monotonic()
+        if self._oaep_starvation_since is None:
+            self._oaep_starvation_since = now
+        waited = now - self._oaep_starvation_since
+        self._oaep_window_metrics["max_wait_seconds"] = round(waited, 3)
+        if waited >= _OAEP_RELAY_STARVATION_ALERT_SECONDS:
+            self._oaep_window_metrics["degraded"] = True
+            logger.warning(
+                "relay oaep poll window starved: eligible={} polled={} waiting={:.1f}s",
+                len(eligible),
+                len(window),
+                waited,
+            )
+        else:
+            self._oaep_window_metrics["degraded"] = False
+
+    def oaep_window_metrics(self) -> dict[str, Any]:
+        """Content-free scheduling diagnostics for the OAEP poll Window."""
+        return dict(self._oaep_window_metrics)
+
+    def _fair_oaep_window(
+        self,
+        candidates: list[dict[str, Any]],
+        *,
+        active_session_ids: set[str],
+        budget: int,
+    ) -> list[dict[str, Any]]:
+        """Allocate the poll Window: active Runs first, then rotating old waiters.
+
+        Rotation reuses the same offsets as the catalog scan so every eligible
+        Session is guaranteed to be polled within ``ceil(n / budget)`` passes.
+        """
+        if len(candidates) <= budget:
+            return list(candidates)
+        active = [c for c in candidates if str(c["session_id"]) in active_session_ids]
+        idle = [c for c in candidates if str(c["session_id"]) not in active_session_ids]
+        reserved = min(len(active), max(_OAEP_RELAY_ACTIVE_RESERVED, budget // 2))
+        window = active[:reserved]
+        remaining = budget - len(window)
+        if remaining <= 0:
+            return window
+        idle.sort(key=lambda c: (str(c.get("wait_key") or ""), str(c["session_id"])))
+        if len(idle) > remaining:
+            offset = self._relay_session_scan_offsets.get("oaep:idle", 0) % len(idle)
+            window.extend(idle[offset:offset + remaining])
+            self._relay_session_scan_offsets["oaep:idle"] = (offset + remaining) % len(idle)
+        else:
+            window.extend(idle)
+        return window
 
     def _eligible_journal_sessions(
         self,
@@ -761,9 +880,22 @@ class GatewayRuntimeControlHandler:
 
     @staticmethod
     def _bounded_oaep_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Trim a batch to the byte/event budget without dropping terminal events.
+
+        Terminal frames (``run.completed/failed/cancelled``) carry the outcome the
+        client is blocked on, so they are admitted first and deltas only fill what
+        is left. Truncating them would strand a Run with no observable conclusion.
+        """
+        def terminal(frame: dict[str, Any]) -> bool:
+            event = frame.get("event") or {}
+            return str(event.get("type") or "").startswith("oaep.run.") and not str(
+                event.get("type") or ""
+            ).endswith((".delta", ".started"))
+
+        ordered = [f for f in frames if terminal(f)] + [f for f in frames if not terminal(f)]
         bounded: list[dict[str, Any]] = []
         encoded_bytes = 0
-        for frame in frames:
+        for frame in ordered:
             size = len(json.dumps(
                 frame.get("event"), ensure_ascii=False, separators=(",", ":")
             ).encode("utf-8"))
@@ -1268,7 +1400,9 @@ class GatewayRuntimeControlHandler:
         if not self._oaep_waterlines_available:
             self._bootstrap_existing_session_cursors()
         forwarded: list[dict[str, Any]] = []
-        concurrency = asyncio.Semaphore(_OAEP_RELAY_SESSION_BUDGET)
+        # NOTE: no Semaphore here. The poll Window below is already capped at
+        # _OAEP_RELAY_SESSION_BUDGET, so a second gate of the same size only
+        # serialized the (already bounded) fan-out.
         pending_session_ids = await asyncio.to_thread(
             self._sessions_with_pending_oaep_events
         )
@@ -1284,31 +1418,20 @@ class GatewayRuntimeControlHandler:
 
         async def poll_session(session: dict[str, Any], workspace_id: str) -> list[dict[str, Any]]:
             session_id = str(session["session_id"])
-            async with concurrency:
-                if session_id not in self._relay_oaep_event_cursors:
-                    if self._oaep_waterlines_available:
-                        self._store_oaep_event_cursor(session_id, 0)
-                    else:
-                        await self._ensure_oaep_event_cursor(session_id)
-                        return []
-                after = self._relay_oaep_event_cursors[session_id]
-                try:
-                    if self.journal_database.is_file():
-                        try:
-                            events = await asyncio.to_thread(
-                                self._read_local_oaep_events, session_id, after
-                            )
-                        except sqlite3.Error:
-                            page = await self.transport.request(
-                                "GET",
-                                encoded_path(
-                                    "v1", "sessions", session_id, "oaep-events",
-                                    query=(("after_sequence", after),
-                                           ("limit", _OAEP_RELAY_BATCH_EVENTS)),
-                                ),
-                            )
-                            events = page.get("data", [])
-                    else:
+            if session_id not in self._relay_oaep_event_cursors:
+                if self._oaep_waterlines_available:
+                    self._store_oaep_event_cursor(session_id, 0)
+                else:
+                    await self._ensure_oaep_event_cursor(session_id)
+                    return []
+            after = self._relay_oaep_event_cursors[session_id]
+            try:
+                if self.journal_database.is_file():
+                    try:
+                        events = await asyncio.to_thread(
+                            self._read_local_oaep_events, session_id, after
+                        )
+                    except sqlite3.Error:
                         page = await self.transport.request(
                             "GET",
                             encoded_path(
@@ -1318,33 +1441,43 @@ class GatewayRuntimeControlHandler:
                             ),
                         )
                         events = page.get("data", [])
-                except GatewayControlError as exc:
-                    if exc.code != "cursor_expired":
-                        raise
-                    if self.journal_database.is_file():
-                        snapshot_sequence = await asyncio.to_thread(
-                            self._latest_local_session_sequence, session_id
-                        )
-                    else:
-                        snapshot = await self.transport.request(
-                            "GET",
-                            encoded_path("v1", "sessions", session_id, "oaep-snapshot"),
-                        )
-                        snapshot_sequence = int(snapshot["snapshot_sequence"])
-                    self._store_oaep_event_cursor(
-                        session_id, snapshot_sequence
+                else:
+                    page = await self.transport.request(
+                        "GET",
+                        encoded_path(
+                            "v1", "sessions", session_id, "oaep-events",
+                            query=(("after_sequence", after),
+                                   ("limit", _OAEP_RELAY_BATCH_EVENTS)),
+                        ),
                     )
-                    return []
-                return [
-                    {
-                        "runtime_id": self.runtime_id,
-                        "workspace_id": workspace_id,
-                        "session_id": session_id,
-                        "sequence": int(event["sequence"]),
-                        "event": self._bind_oaep_public_runtime_identity(event),
-                    }
-                    for event in events
-                ]
+                    events = page.get("data", [])
+            except GatewayControlError as exc:
+                if exc.code != "cursor_expired":
+                    raise
+                if self.journal_database.is_file():
+                    snapshot_sequence = await asyncio.to_thread(
+                        self._latest_local_session_sequence, session_id
+                    )
+                else:
+                    snapshot = await self.transport.request(
+                        "GET",
+                        encoded_path("v1", "sessions", session_id, "oaep-snapshot"),
+                    )
+                    snapshot_sequence = int(snapshot["snapshot_sequence"])
+                self._store_oaep_event_cursor(
+                    session_id, snapshot_sequence
+                )
+                return []
+            return [
+                {
+                    "runtime_id": self.runtime_id,
+                    "workspace_id": workspace_id,
+                    "session_id": session_id,
+                    "sequence": int(event["sequence"]),
+                    "event": self._bind_oaep_public_runtime_identity(event),
+                }
+                for event in events
+            ]
 
         published = await self.published_workspaces()
         active = {
@@ -1369,9 +1502,18 @@ class GatewayRuntimeControlHandler:
             )
             if eligible is not None:
                 if eligible:
+                    active_session_ids = await asyncio.to_thread(
+                        self._active_oaep_session_ids
+                    )
+                    window = self._fair_oaep_window(
+                        eligible,
+                        active_session_ids=active_session_ids,
+                        budget=_OAEP_RELAY_SESSION_BUDGET,
+                    )
+                    self._record_oaep_window(eligible, window)
                     pages = await asyncio.gather(*(
                         poll_session(session, str(session["workspace_id"]))
-                        for session in eligible
+                        for session in window
                     ))
                     for events in pages:
                         forwarded.extend(events)
@@ -1417,9 +1559,16 @@ class GatewayRuntimeControlHandler:
                 if session_id not in selected_ids:
                     selected.append(session)
                     selected_ids.add(session_id)
+            active_session_ids = await asyncio.to_thread(self._active_oaep_session_ids)
+            window = self._fair_oaep_window(
+                selected,
+                active_session_ids=active_session_ids,
+                budget=_OAEP_RELAY_SESSION_BUDGET,
+            )
+            self._record_oaep_window(selected, window)
             pages = await asyncio.gather(*(
                 poll_session(session, workspace_id)
-                for session in selected[:_OAEP_RELAY_SESSION_BUDGET]
+                for session in window
             ))
             for events in pages:
                 forwarded.extend(events)

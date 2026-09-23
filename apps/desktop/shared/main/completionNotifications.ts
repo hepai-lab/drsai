@@ -30,7 +30,7 @@ const SETTINGS_FILE = join(DRSAI_HOME, "desktop", "completion-notifications.json
 const shownKeys = new Set<string>();
 const activeNotifications = new Map<string, DesktopNotificationHandle>();
 const diagnostics: CompletionNotificationDiagnostic[] = [];
-let preference: CompletionNotificationPreference = { enabled: false, language: "zh" };
+let preference: CompletionNotificationPreference = { enabled: true, language: "zh" };
 let preferenceWriteQueue: Promise<void> = Promise.resolve();
 let handlers: Handlers = {
   notifications: { supported: () => false, create: () => { throw new Error("Notification service is not configured."); } },
@@ -45,8 +45,15 @@ export async function restoreCompletionNotificationPreference(): Promise<Complet
   try {
     preference = normalizePreference(JSON.parse(await readFile(SETTINGS_FILE, "utf8")));
   } catch {
-    preference = { enabled: false, language: "zh" };
+    // Default to enabled for users who never persisted a preference; a stored
+    // preference is always respected as-is.
+    preference = { enabled: true, language: "zh" };
   }
+  return { ...preference };
+}
+
+/** Read the in-memory preference without touching disk. */
+export function getCompletionNotificationPreference(): CompletionNotificationPreference {
   return { ...preference };
 }
 
@@ -79,6 +86,43 @@ export function notifyBackgroundTaskCompleted(task: DesktopBackgroundTask, targe
   const deliverySummary = task.deliverySummary ? redactDeliverySummary(task.deliverySummary) : undefined;
   const title = "OpenDrSai";
   const body = message(task.title, deliverySummary);
+  return presentNotification(key, title, body, target, deliverySummary);
+}
+
+/**
+ * Notify that a chat turn finished while its conversation was not the one on
+ * screen. The active conversation already raises a notification from the
+ * renderer on its own terminal event, so only backgrounded turns reach here.
+ */
+export function notifyConversationCompleted(input: {
+  threadId: string;
+  title?: string;
+  workspacePath?: string;
+  failed: boolean;
+  /** Latest user input of the finished turn; preferred over the title. */
+  prompt?: string;
+}): boolean {
+  if (!preference.enabled || !handlers.notifications.supported()) return false;
+  const key = `chat_run:${input.threadId}:${input.failed ? "failed" : "completed"}`;
+  if (shownKeys.has(key)) return false;
+  shownKeys.add(key);
+  const title = "OpenDrSai";
+  const body = conversationMessage(input.prompt || input.title, input.failed);
+  return presentNotification(key, title, body, {
+    kind: "chat_run",
+    targetId: input.threadId,
+    threadId: input.threadId,
+    ...(input.workspacePath ? { workspacePath: input.workspacePath } : {}),
+  }, undefined);
+}
+
+function presentNotification(
+  key: string,
+  title: string,
+  body: string,
+  target: CompletionNotificationTarget,
+  deliverySummary?: DesktopTaskDeliverySummary,
+): boolean {
   const notification = handlers.notifications.create({ title, body, silent: false });
   const record: CompletionNotificationDiagnostic = {
     key, title, body, target: { ...target }, visibility: handlers.getWindowVisibility(),
@@ -105,6 +149,31 @@ function message(taskTitle: string, summary?: DesktopTaskDeliverySummary): strin
   return preference.language === "zh"
     ? safe ? `任务“${safe}”已完成，点击查看结果。` : "任务已完成，点击查看结果。"
     : safe ? `“${safe}” is complete. Click to view the result.` : "Your task is complete. Click to view the result.";
+}
+
+/**
+ * A conversation title comes from the user's first message and can be very
+ * long. Notifications only need a short hint, so clamp it before composing
+ * the body.
+ */
+function shortTaskLabel(threadTitle: string | undefined): string {
+  const safe = threadTitle ? redactNotificationText(threadTitle) : "";
+  const MAX_TITLE_LENGTH = 30;
+  return safe.length > MAX_TITLE_LENGTH ? `${safe.slice(0, MAX_TITLE_LENGTH)}…` : safe;
+}
+
+function conversationMessage(threadTitle: string | undefined, failed: boolean): string {
+  const safe = shortTaskLabel(threadTitle);
+  // Windows toasts render plain text only, so the task is highlighted by
+  // putting it on its own line inside corner brackets instead of inline.
+  if (failed) {
+    return preference.language === "zh"
+      ? safe ? `您的任务：\n「${safe}」\n执行失败，请点击查看详情。` : "您的任务执行失败，请点击查看详情。"
+      : safe ? `Your task:\n"${safe}"\nfailed. Click to view details.` : "Your task failed. Click to view details.";
+  }
+  return preference.language === "zh"
+    ? safe ? `您的任务：\n「${safe}」\n已经完成，请点击查看。` : "您的任务已经完成，请点击查看。"
+    : safe ? `Your task:\n"${safe}"\nis complete. Click to view the result.` : "Your task is complete. Click to view the result.";
 }
 
 export function getCompletionNotificationDiagnostics(): CompletionNotificationDiagnostic[] {

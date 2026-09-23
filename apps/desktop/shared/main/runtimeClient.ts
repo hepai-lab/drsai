@@ -528,7 +528,7 @@ export interface RuntimeClient {
   getConversationSnapshot(sessionId: string): Promise<RuntimeConversationSnapshot>;
   listSessionEvents(sessionId: string, afterSequence?: number, limit?: number): Promise<RuntimeSessionEventPage>;
   openSessionEventStream(sessionId: string, afterSequence: number, signal: AbortSignal): Promise<RuntimeSessionEventStream>;
-  getOaepSnapshot(sessionId: string): Promise<OaepSnapshot>;
+  getOaepSnapshot(sessionId: string, options?: { cursor?: string; limit?: number; signal?: AbortSignal }): Promise<OaepSnapshot>;
   listOaepEvents(sessionId: string, afterSequence?: number, limit?: number): Promise<OaepEventPage>;
   openOaepEventStream(sessionId: string, afterSequence: number, signal: AbortSignal): Promise<OaepEventStream>;
   getAgentRun(runId: string): Promise<RuntimeAgentRun>;
@@ -955,9 +955,15 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/agent-backend/binding`);
   }
 
-  async getOaepSnapshot(sessionId: string): Promise<OaepSnapshot> {
+  async getOaepSnapshot(sessionId: string, options: { cursor?: string; limit?: number; signal?: AbortSignal } = {}): Promise<OaepSnapshot> {
     this.assertResourceId("Session", sessionId);
-    const snapshot = await this.requestJson<OaepSnapshot>(`/v1/sessions/${encodeURIComponent(sessionId)}/oaep-snapshot`);
+    const query = new URLSearchParams();
+    if (options.cursor) query.set("cursor", options.cursor);
+    if (options.limit !== undefined) query.set("limit", String(Math.max(1, Math.min(500, Math.trunc(options.limit) || 100))));
+    const snapshot = await this.requestJson<OaepSnapshot>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/oaep-snapshot${query.size ? `?${query}` : ""}`,
+      { signal: options.signal },
+    );
     assertOaepSnapshotIntegrity(snapshot);
     return snapshot;
   }

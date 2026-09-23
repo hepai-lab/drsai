@@ -2695,6 +2695,8 @@ export function installMockDesktopApi(): void {
       ] : [],
       can_delete: provider !== myDrSaiModelConnection.model_provider,
     }),
+    preflightMyDrSaiModelDeletion: async (provider, modelId) => ({ provider, model_id: modelId, origin: "user", action: "delete", references: [], can_delete: true }),
+    deleteMyDrSaiModel: async (provider, modelId) => ({ ok: true, provider, model_id: modelId, action: "delete" }),
     deleteMyDrSaiModelProvider: async (provider, _deleteCredential = true) => {
       if (provider === myDrSaiModelConnection.model_provider) {
         myDrSaiModelConnection = { ...myDrSaiModelConnection, model_provider: "hepai", provider: { ...myDrSaiModelConnection.provider, name: "hepai", base_url: "https://ddf.ihep.ac.cn/apiv2" } };
@@ -3517,6 +3519,7 @@ export function installMockDesktopApi(): void {
     getVoiceRuntimeStatus: async () => ({
       runtimeId: "mock-local",
       state: "ready",
+      reasonCode: "ready",
       supportedMimeTypes: ["audio/webm", "audio/wav"],
       maxBytes: 10 * 1024 * 1024,
       maxDurationSeconds: 120,
@@ -5252,6 +5255,7 @@ export function installMockDesktopApi(): void {
       reusableTasks = reusableTasks.map((item) => item.id === task.id ? { ...item, runCount: item.runCount + 1, lastRunAt: now, lastInputFingerprint: "mock-fresh-input", updatedAt: now, ...(request.adjustmentScope === "update_template" ? { savedAdjustments: request.adjustments } : {}) } : item);
       return { id: `reusable-run-${crypto.randomUUID()}`, reusableTaskId: task.id, reusableTaskName: task.name, workspacePath: request.workspacePath, resolvedTask: `Run reusable task: ${task.name}\nReplacement inputs:\n${inputs.map((input) => input.path).join("\n")}\nRun adjustments: ${JSON.stringify(request.adjustments)}\nScope: ${request.adjustmentScope}\nFreshness requirement: ignore all earlier outputs and caches.`, inputs, fixedRules: [...task.fixedRules], adjustments: request.adjustments, adjustmentScope: request.adjustmentScope, cachePolicy: "force_fresh_input_read", createdAt: now };
     },
+    getCompletionNotificationPreference: async () => ({ enabled: true, language: "zh" }),
     setCompletionNotificationPreference: async (preference) => ({
       enabled: preference.enabled === true,
       language: preference.language === "en" ? "en" : "zh",
@@ -6937,6 +6941,12 @@ export function installMockDesktopApi(): void {
     sendRenderHealthReport: () => {
       // Mock: no-op — backpressure control is only active in production
     },
+    setWindowChromeAppearance: async () => true,
+    windowMinimize: async () => true,
+    windowToggleMaximize: async () => false,
+    windowClose: async () => true,
+    getWindowMaximized: async () => false,
+    onWindowMaximizedChanged: () => () => undefined,
   };
 
   window.openDrSai = api;

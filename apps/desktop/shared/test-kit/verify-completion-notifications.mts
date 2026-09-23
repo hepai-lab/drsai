@@ -22,7 +22,7 @@ service.configureCompletionNotifications({
   getWindowVisibility: () => "hidden",
 });
 
-assert.deepEqual(await service.restoreCompletionNotificationPreference(), { enabled: false, language: "zh" });
+assert.deepEqual(await service.restoreCompletionNotificationPreference(), { enabled: true, language: "zh" });
 await service.setCompletionNotificationPreference({ enabled: true, language: "zh" });
 const persisted = JSON.parse(await readFile(join(root, "desktop", "completion-notifications.json"), "utf8"));
 assert.deepEqual(persisted, { enabled: true, language: "zh" });

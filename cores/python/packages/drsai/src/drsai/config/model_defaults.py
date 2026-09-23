@@ -93,10 +93,10 @@ class ModelEntry:
     api_key_env: str = ""                # Environment variable name for API key
     requires_api_key: bool = True        # False → endpoint needs no authentication
     # ── Wire protocol ──
-    # None → infer in set_model_client (OpenAI new-series gpt-5.x/o* → True, else
-    # False). True/False → force, overrides inference. Lets users opt out of the
-    # Responses API for third-party OpenAI-compatible endpoints that only
-    # implement Chat Completions (e.g. HEPAI gateway for kimi/glm/deepseek).
+    # None → infer in set_model_client (client_type=openai defaults to True;
+    # anthropic/gemini always False). True/False → force, overrides inference.
+    # Lets users opt out of the Responses API for endpoints that only implement
+    # Chat Completions; the client falls back automatically on 404/405/501.
     use_responses_api: Optional[bool] = None
 
     @staticmethod
@@ -207,6 +207,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,           # DeepSeek V4 text models do not support image input
+        use_responses_api=True,
     ),
     "hepai/deepseek-v4-flash": ModelEntry(
         model="hepai/deepseek-v4-flash",
@@ -215,6 +216,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,           # DeepSeek V4 text models do not support image input
+        use_responses_api=True,
     ),
     "hepai/deepseek-flash": ModelEntry(
             model="hepai/deepseek-flash",
@@ -223,6 +225,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
             client_type="openai",
             reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
             vision=True,           # DeepSeek V4 text models do not support image input
+            use_responses_api=True,
     ),
     "deepseek-v4.1-flash": ModelEntry(
             model="deepseek-ai/deepseek-v4.1-flash",
@@ -231,6 +234,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
             client_type="openai",
             reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
             vision=True,           # DeepSeek V4 text models do not support image input
+            use_responses_api=True,
         ),
     "deepseek-v4-pro": ModelEntry(
         model="deepseek-ai/deepseek-v4-pro",
@@ -239,6 +243,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,
+        use_responses_api=True,
     ),
     "deepseek-v4-flash": ModelEntry(
         model="deepseek-ai/deepseek-v4-flash",
@@ -247,6 +252,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,
+        use_responses_api=True,
     ),
     # ── OpenAI GPT ───────────────────────────────────────────────────
     "gpt-5.6-luna": ModelEntry(
@@ -256,6 +262,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
         vision=True,            # GPT-5.x supports image input
+        use_responses_api=True,
         ),
     "gpt-5.6-terra": ModelEntry(
         model="openai/gpt-5.6-terra",
@@ -264,6 +271,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
         vision=True,            # GPT-5.x supports image input
+        use_responses_api=True,
             ),
     "gpt-5.6-sol": ModelEntry(
         model="openai/gpt-5.6-sol",
@@ -272,14 +280,16 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
         vision=True,            # GPT-5.x supports image input
+        use_responses_api=True,
     ),
     "gpt-6-astra": ModelEntry(
         model="openai/gpt-6-astra",
         token_limit=1050000,     # max input tokens (output comes from this pool)
         max_tokens=64000,      # max output per request
         client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high", "xhigh", "max"], param_type="reasoning_effort"),
         vision=True,            # GPT-5.x supports image input
+        use_responses_api=True,
     ),
     # ── GIMINI ────────────────────────────────────────────────────────────
     "kimi-k3": ModelEntry(
@@ -289,6 +299,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["max", "low", "high"], param_type="reasoning_effort"),
         vision=True,            # Gemini supports image input
+        use_responses_api=True,
     ),
     # ── Zhipu GLM ────────────────────────────────────────────────────
     # Sources: litellm (zai/glm-5), OpenRouter
@@ -299,6 +310,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
         vision=True,            # GLM-5.1 supports image input
+        use_responses_api=True,
     ),
     "glm-5.3": ModelEntry(
         model="zhipu/glm-5.3",
@@ -307,6 +319,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
         vision=True,
+        use_responses_api=True,
     ),
     # ── Anthropic Claude ──────────────────────────────────────────────
     # token_limit = total context window (input + output share the same window)

@@ -98,6 +98,8 @@ def refresh_backend_source_archive(version: str) -> None:
         cwd=windows_dir,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if result.returncode != 0:
         raise SystemExit(

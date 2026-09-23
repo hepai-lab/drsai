@@ -34,7 +34,9 @@ import {
  *       tail instead of by scanning the whole transcript, so the streaming path
  *       is a single pass over the conversation rather than two.
  *   5.  ChatWorkspace - the message-array comparison starts at the tail, where
- *       a delta lands, instead of at the oldest message.
+ *       a delta lands, instead of at the oldest message. Callback changes
+ *       refresh the workspace while stable row events retain fresh closures
+ *       without invalidating unchanged historical messages.
  *   6.  App.tsx - sidebar rows are derived once per change rather than three
  *       times per frame, the catalog row is only rewritten when one of the
  *       fields the catalog stores moved, and a row's relative time label still
@@ -46,7 +48,9 @@ import {
  * The scheduler and the activity derivation are exercised through their own
  * interfaces, because a React hook, a React component and App.tsx cannot be
  * imported here (they need React, the DOM and the whole application graph).
- * The remaining contracts are asserted textually against their sources.
+ * The workspace memo/event behavior reuses the isolated source-execution
+ * harness in verify-chat-workspace-memo; the remaining wiring contracts are
+ * asserted textually against their sources.
  */
 
 // Resolve the checkout from the entry path the runner was given rather than
@@ -256,7 +260,9 @@ check(
 // already names the incoming conversation when the leaving one is flushed. The
 // leaving id must therefore be threaded through the flush, or the coalesced
 // tail is persisted under the NEW thread's id and pollutes it.
-countOf(adapter, "flushThreadSnapshot(threadId); cacheLiveThreadView(threadId);", 2, "both thread-change cleanups flush a pending publish under the leaving thread id");
+countOf(adapter, "flushThreadSnapshot(threadId); cacheLiveThreadView(threadId);", 3, "all thread-change cleanups flush a pending publish under the leaving thread id");
+check(adapter, "structuredFlushTimerRef.current = window.setTimeout(flushStructuredEventDeltas, 50);", "structured deltas have a timer fallback when requestAnimationFrame is delayed");
+check(adapter, "assistantId = assistantId || `stream:${requestId}`;", "structured events recreate a missing active assistant shell instead of being dropped");
 check(
   adapter,
   "threadId: threadIdOverride ?? threadIdRef.current,",
@@ -424,11 +430,12 @@ check(
   "const CHAT_WORKSPACE_ARRAY_PROPS: ReadonlySet<keyof ChatWorkspaceProps> = new Set<keyof ChatWorkspaceProps>([",
   "the array-prop set is hoisted out of the comparator",
 );
-check(
-  chatWorkspace,
-  "if (typeof nextValue === \"function\") return true;",
-  "unstable callback identities must not re-render the workspace",
-);
+// Callback-only updates MUST cross the outer memo boundary to refresh event
+// refs. The performance contract is unchanged history-row stability, not a
+// frozen workspace: skipping callbacks here would retain stale closures.
+// Reuse the behavioral harness (same test-kit-relative argv[2] source lookup)
+// rather than prescribing an unsafe comparator implementation as source text.
+await import("./verify-chat-workspace-memo.mts");
 
 // 6. App.tsx: the sidebar derives each row once, and the catalog row is only
 // rewritten when a field the catalog actually stores moved.

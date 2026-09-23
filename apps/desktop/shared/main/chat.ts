@@ -34,6 +34,7 @@ import {
   trySendToRenderer,
 } from "./rendererIpcTarget";
 import { listRecordedChatRunEvents, recordChatRunEvent } from "./chatRunJournal";
+import { notifyChatThreadCompletion } from "./chatThreadCompletion";
 import { codexContinuationAction } from "./codexSessionResumePolicy";
 import { assertRequestMessageCount, selectCurrentUserInput } from "./chatInput";
 import { isOaepSyncDegradedError, isPresentationNoiseOaepEvent, materializeOaepDeltaShadow, presentationItemForOaepEvent, reduceOaepEvent, subscribeOaepSession, type OaepDeltaShadow } from "./oaepSessionStream";
@@ -164,6 +165,12 @@ const MAX_BROWSER_SCREENSHOT_DATA_URL_CHARS = 2_000_000;
 // limits caused premature session interruption at ~50-68 operations.
 // Set OPENDRSAI_CHAT_TIMEOUT_MS > 0 to re-enable the absolute timeout.
 const CHAT_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_CHAT_TIMEOUT_MS", 0);
+// recoverChatRun trusts an in-memory turn record only after the Runtime
+// confirms its Run is still live. The probe must stay short: it runs on the
+// thread-switch path, where a dead Runtime would otherwise leave the composer
+// neutral (no stop button) for the whole recovery timeout.
+const TURN_LIVENESS_PROBE_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_TURN_LIVENESS_PROBE_TIMEOUT_MS", 2_000);
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 interface RuntimeProjectionTarget {
@@ -462,6 +469,55 @@ function validateChatTurnIdentity(value: unknown): ChatTurnIdentity | null {
 }
 
 /**
+ * Verify against the Runtime that the Run behind a remembered chat turn is
+ * still live before letting recoverChatRun reattach the renderer to it. The
+ * turn record surviving in `chatTurns` only proves a turn existed in this
+ * process; when its terminal event was lost (dispatcher gap, subscription
+ * settled silently) the record pins the restored composer on "running"
+ * forever. A record without a Run binding cannot contradict local state, so
+ * it stays trusted. Any probe failure (dead Runtime, lost run, timeout) is
+ * treated as not-live: the recovery path below then settles the thread from
+ * its persisted binding and journal instead of reviving a ghost turn.
+ */
+async function verifyExistingTurnLiveness(turn: ChatTurnRecord): Promise<boolean> {
+  const runId = turn.runtime?.runId ?? turn.runId;
+  if (!runId) return true;
+  let client = turn.runtime?.client;
+  let release: (() => void) | undefined;
+  if (!client) {
+    const thread = (await listThreads()).find((candidate) => candidate.id === turn.sessionId);
+    if (!thread?.workspacePath) return false;
+    const resolved = await connectRuntimeClientForWorkspace(
+      thread.workspacePath, thread.execution?.workspaceId,
+    );
+    client = resolved.client as RuntimeClient;
+  }
+  try {
+    release = retainRuntimeClient(client);
+  } catch {
+    return false;
+  }
+  try {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const probe = client.getAgentRun(runId).then(
+      (run) => !TERMINAL_RUN_STATUSES.has(run.status),
+      () => false,
+    );
+    return await Promise.race([
+      probe,
+      new Promise<false>((resolve) => {
+        timeout = setTimeout(() => resolve(false), TURN_LIVENESS_PROBE_TIMEOUT_MS);
+        timeout.unref?.();
+      }),
+    ]).finally(() => {
+      if (timeout !== undefined) clearTimeout(timeout);
+    });
+  } finally {
+    release();
+  }
+}
+
+/**
  * Rebuild the Desktop-facing portion of a Runtime chat after Electron restarts.
  * The authoritative Run and its event log remain in the Runtime, so recovery
  * must read them there instead of treating a renderer reload as a failed run.
@@ -491,7 +547,11 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   // while startChat still owns the OAEP Session. Stealing that listener closes
   // the shared stream and the live turn fails with oaep_run_terminal_missing.
   // Rebind the renderer and leave the in-process owner waiting for the Run terminal.
-  if (existingTurn) {
+  // The rebind is only offered once the Runtime confirms the Run is still
+  // live; a stale record left behind by a lost terminal event falls through
+  // to the persisted binding below, which settles the thread instead of
+  // pinning the composer on "running" for a finished turn.
+  if (existingTurn && await verifyExistingTurnLiveness(existingTurn)) {
     const runId = existingTurn.runtime?.runId ?? existingTurn.runId;
     return [{
       requestId,
@@ -503,6 +563,30 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   }
   let thread = (await listThreads()).find((candidate) => candidate.id === sessionId);
   if (!thread) return [];
+  if (existingTurn && !thread.lastRunId) {
+    // The dead in-memory record is the only trace of this turn; nothing can
+    // resume it and no terminal event will ever arrive. Drop the record and
+    // settle the restored composer instead of leaving it stuck on "running".
+    existingTurn.subscription?.stop();
+    chatTurns.delete(requestId);
+    chatEventSequences.delete(requestId);
+    return [{
+      requestId,
+      sessionId,
+      seq: 1,
+      type: "error",
+      error: "The previous run of this conversation is no longer active.",
+      errorEnvelope: {
+        code: "run_inactive",
+        category: "runtime",
+        retryable: false,
+        user_message_key: "errors.runtime.run_inactive",
+        recovery_actions: ["continue", "redo", "abandon"],
+        diagnostic_reference: `request:${requestId}`,
+        redacted_details: {},
+      },
+    }];
+  }
   // Electron may stop after Runtime committed Run creation but before the
   // POST response and Run ID reached the thread projection. Recover that
   // acknowledgement by the durable outbox key; never issue the POST again.
@@ -648,7 +732,17 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
         chatTurns.delete(requestId);
         chatEventSequences.delete(requestId);
         await completeRecoveredOutbox();
-        await updateThread({ id: thread.id, status: event.type === "event.run.completed" ? "idle" : "error" });
+        const status = event.type === "event.run.completed" ? "idle" : "error";
+        await updateThread({ id: thread.id, status });
+        // A terminal event observed via a recovered OAEP subscription still
+        // needs the same settled broadcast as the active pipeline so the
+        // catalog updates and a background completion notification can fire.
+        notifyChatThreadCompletion(eventTarget, {
+          threadId: thread.id,
+          status,
+          failed: status === "error",
+          cancelled: false,
+        });
       }
     };
     if (recoveryDecision.kind === "reconnect" && eventTarget) {
@@ -1318,6 +1412,13 @@ async function runChat(
     // OAEP event.run.* is the only Runtime terminal source.
     structuredTerminalRequests.delete(requestId);
     chatTurns.delete(requestId);
+    notifyChatThreadCompletion(webContents, {
+      threadId: sessionId,
+      status: "idle",
+      failed: false,
+      cancelled: false,
+      prompt: selectCurrentUserInput(request.messages),
+    });
     return;
   } catch (error) {
     if (platformDescriptor && request.agentId && !controller.signal.aborted) {
@@ -1356,6 +1457,14 @@ async function runChat(
     if (authoritativeRuntimeRunId && controller.signal.aborted && controller.signal.reason !== "timeout") {
       recordChatRunEvent({ requestId, sessionId, runId: authoritativeRuntimeRunId, type: "aborted" });
     }
+    const cancelledByUser = controller.signal.aborted && controller.signal.reason !== "timeout";
+    notifyChatThreadCompletion(webContents, {
+      threadId: sessionId,
+      status: cancelledByUser ? "idle" : "error",
+      failed: !cancelledByUser,
+      cancelled: cancelledByUser,
+      prompt: selectCurrentUserInput(request.messages),
+    });
     throw error;
   } finally {
     if (timeout) clearTimeout(timeout);
@@ -1748,63 +1857,88 @@ function inspectNativeImageBytes(bytes: Buffer, name: string, requireImage = fal
   const detected = detectImageMime(bytes);
   if (!extensionSuggestsImage && !requireImage && !detected) return undefined;
   if (!detected) throw new Error("Image is corrupt or uses an unsupported format (PNG, JPEG, GIF, or WebP required).");
-  const expected = extension === ".png" ? "image/png"
-    : extension === ".jpg" || extension === ".jpeg" ? "image/jpeg"
-    : extension === ".gif" ? "image/gif"
-    : extension === ".webp" ? "image/webp"
-    : undefined;
-  if (expected && expected !== detected) throw new Error(`Image extension does not match its content (${detected}).`);
+  // An extension/content disagreement means the file was mislabeled, not that
+  // it is unusable. The sniffed type is authoritative: send the real format
+  // and let the Runtime decode it. Rejecting here turned a cosmetic renaming
+  // mistake (photo.heic renamed to .jpg) into a hard "cannot send" error.
   return detected;
 }
 
 function detectImageMime(bytes: Buffer): string | undefined {
   if (isStructurallyValidPng(bytes)) return "image/png";
   if (isStructurallyValidJpeg(bytes)) return "image/jpeg";
-  if (bytes.length >= 14 && ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))
-    && bytes.readUInt16LE(6) > 0 && bytes.readUInt16LE(8) > 0 && bytes[bytes.length - 1] === 0x3b) return "image/gif";
+  // GIF: signature + a sane logical screen. The trailing 0x3b trailer is NOT
+  // required — data appended after it is legal and common, so demanding it at
+  // the exact last byte rejected valid files.
+  if (bytes.length >= 13 && ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))
+    && bytes.readUInt16LE(6) > 0 && bytes.readUInt16LE(8) > 0) return "image/gif";
+  // WebP: the RIFF container declares its payload size; real files may carry
+  // trailing bytes, so a mismatch must not fail detection. Accept a declared
+  // size that fits within the buffer.
   if (bytes.length >= 20 && bytes.subarray(0, 4).toString("ascii") === "RIFF"
-    && bytes.subarray(8, 12).toString("ascii") === "WEBP" && bytes.readUInt32LE(4) + 8 === bytes.length
+    && bytes.subarray(8, 12).toString("ascii") === "WEBP"
+    && bytes.readUInt32LE(4) + 8 <= bytes.length
     && ["VP8 ", "VP8L", "VP8X"].includes(bytes.subarray(12, 16).toString("ascii"))) return "image/webp";
   return undefined;
 }
 
 function isStructurallyValidPng(bytes: Buffer): boolean {
-  if (bytes.length < 45 || !bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return false;
+  // 8-byte signature + IHDR (13 data + 12 overhead) is 33 bytes. Anything
+  // smaller cannot be a PNG; the previous 45-byte floor rejected legal
+  // minimum-size images.
+  if (bytes.length < 33 || !bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return false;
   let offset = 8;
   let chunks = 0;
+  let sawIhdr = false;
   while (offset + 12 <= bytes.length && chunks < 100_000) {
     const length = bytes.readUInt32BE(offset);
     const end = offset + 12 + length;
-    if (end > bytes.length) return false;
+    if (end > bytes.length) break;
     const type = bytes.subarray(offset + 4, offset + 8).toString("ascii");
-    if (chunks === 0 && (type !== "IHDR" || length !== 13
-      || bytes.readUInt32BE(offset + 8) === 0 || bytes.readUInt32BE(offset + 12) === 0)) return false;
+    if (chunks === 0) {
+      if (type !== "IHDR" || length !== 13
+        || bytes.readUInt32BE(offset + 8) === 0 || bytes.readUInt32BE(offset + 12) === 0) return false;
+      sawIhdr = true;
+    }
+    // A benign CRC mismatch (some encoders and post-processing tools rewrite
+    // chunks without fixing the checksum) is a corruption signal, not proof
+    // that the bytes are not a PNG. The signature plus a valid IHDR already
+    // establish the format, so report it and let downstream decoders decide.
     const expectedCrc = bytes.readUInt32BE(offset + 8 + length);
-    if (crc32(bytes.subarray(offset + 4, offset + 8 + length)) !== expectedCrc) return false;
+    if (crc32(bytes.subarray(offset + 4, offset + 8 + length)) !== expectedCrc) break;
     offset = end;
     chunks += 1;
-    if (type === "IEND") return length === 0 && offset === bytes.length;
+    // Data after IEND (trailing bytes, appended metadata) is legal; IEND just
+    // has to mark the end of the chunk stream.
+    if (type === "IEND") return length === 0 && sawIhdr;
   }
-  return false;
+  return sawIhdr;
 }
 
 function isStructurallyValidJpeg(bytes: Buffer): boolean {
-  if (bytes.length < 12 || bytes[0] !== 0xff || bytes[1] !== 0xd8
-    || bytes[bytes.length - 2] !== 0xff || bytes[bytes.length - 1] !== 0xd9) return false;
+  if (bytes.length < 12 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return false;
   let offset = 2;
   let dimensionsFound = false;
-  while (offset + 4 <= bytes.length - 2) {
+  while (offset + 2 <= bytes.length) {
     if (bytes[offset] !== 0xff) { offset += 1; continue; }
-    while (bytes[offset] === 0xff) offset += 1;
+    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+    if (offset >= bytes.length) break;
     const marker = bytes[offset++];
+    // EOI. Camera software, EXIF writers and some encoders append bytes after
+    // the EOI marker, so this must NOT be required to land on the final two
+    // bytes. Validating "an EOI exists" is what "is this a JPEG" means.
     if (marker === 0xd9) break;
     if (marker === 0x00 || marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7)) continue;
-    if (offset + 2 > bytes.length) return false;
+    if (offset + 2 > bytes.length) break;
     const length = bytes.readUInt16BE(offset);
-    if (length < 2 || offset + length > bytes.length) return false;
+    // A truncated tail must not reject an otherwise intact image: the SOF
+    // dimensions are already known, so stop scanning and report success.
+    if (length < 2 || offset + length > bytes.length) break;
     if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
-      if (length < 7 || bytes.readUInt16BE(offset + 3) === 0 || bytes.readUInt16BE(offset + 5) === 0) return false;
-      dimensionsFound = true;
+      // A frame header with zero width/height is genuinely malformed. A
+      // header too short to carry dimensions is skipped, not rejected.
+      if (length >= 7 && (bytes.readUInt16BE(offset + 3) === 0 || bytes.readUInt16BE(offset + 5) === 0)) return false;
+      if (length >= 7) dimensionsFound = true;
     }
     offset += length;
     if (marker === 0xda) break;
@@ -2165,8 +2299,8 @@ async function runRuntimeBackendChat(
       }
     },
     onSnapshot(state) {
-      // Backpressure may skip individual deltas; rebuild visible assistant text
-      // from the authoritative Session Item map so streaming does not stall.
+      // Rebuild from the published Session Item map after snapshot/history recovery.
+      // Listener backpressure preserves individual deltas; it never skips them.
       if (!activeRuntimeRunId) return;
       for (const item of state.items.values()) {
         if (item.run_id !== activeRuntimeRunId) continue;

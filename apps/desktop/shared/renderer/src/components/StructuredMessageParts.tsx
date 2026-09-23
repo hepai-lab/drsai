@@ -1,3 +1,4 @@
+import { useStreamingClock } from "../useStreamingClock";
 ﻿import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -80,7 +81,7 @@ interface StructuredMessagePartsProps {
   onRespondInteraction: (part: InteractionPart, response: InteractionResponse) => void;
   onRequestTextInteraction: (part: InteractionPart) => void;
   reproducibilityLevel?: RunReproducibilityLevel;
-  now: number;
+  now?: number;
   startedAt?: number;
   completedAt?: number;
 }
@@ -108,7 +109,6 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   onRespondInteraction,
   onRequestTextInteraction,
   reproducibilityLevel,
-  now,
   startedAt,
   completedAt,
 }: StructuredMessagePartsProps): React.JSX.Element {
@@ -129,17 +129,18 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
       processContentRef.current?.scrollTo({ top: scrollTop, behavior: "auto" });
     },
   }));
-  const citationParts = turn.parts.filter((part): part is CitationPart => part.kind === "citation");
-  const progressParts = turn.parts.filter((part) => part.kind === "progress");
-  const reasoningParts = turn.parts.filter((part) => part.kind === "reasoning");
-  const subtaskParts = turn.parts.filter((part) => part.kind === "subtask");
+  const citationParts = useMemo(() => turn.parts.filter((part): part is CitationPart => part.kind === "citation"), [turn.parts]);
+  const progressParts = useMemo(() => turn.parts.filter((part) => part.kind === "progress"), [turn.parts]);
+  const reasoningParts = useMemo(() => turn.parts.filter((part) => part.kind === "reasoning"), [turn.parts]);
+  const subtaskParts = useMemo(() => turn.parts.filter((part) => part.kind === "subtask"), [turn.parts]);
+  const markdownParts = useMemo(() => turn.parts.filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> => part.kind === "markdown"), [turn.parts]);
   const interactionParts = turn.parts.filter((part): part is InteractionPart =>
     part.kind === "interaction"
     && (part.status === "running" || part.status === "pending")
     && (turn.status === "running" || !respondedRequestIds.has(part.requestId))
   );
-  const artifactParts = turn.parts.filter((part): part is ArtifactPart => part.kind === "artifact");
-  const inlineArtifactCandidates: InlineArtifactLink[] = artifactParts
+  const artifactParts = useMemo(() => turn.parts.filter((part): part is ArtifactPart => part.kind === "artifact"), [turn.parts]);
+  const inlineArtifactCandidates = useMemo<InlineArtifactLink[]>(() => artifactParts
     .filter((part) => part.artifactType !== "image" && part.artifactType !== "web")
     .map((part) => ({
       id: part.id,
@@ -147,14 +148,17 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
       title: part.path || part.url || part.name,
       targets: [part.name, part.path, part.url].filter((value): value is string => Boolean(value)),
       state: resourceState(part, resourceStates),
-    }));
-  const inlineArtifactsByMarkdown = new Map<string, SelectedInlineArtifactLink[]>();
-  const embeddedArtifactIds = new Set<string>();
-  for (const markdownPart of turn.parts.filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> => part.kind === "markdown")) {
-    const selected = selectInlineArtifactLinks(markdownPart.markdown, inlineArtifactCandidates.filter((candidate) => !embeddedArtifactIds.has(candidate.id)));
-    if (selected.length) inlineArtifactsByMarkdown.set(markdownPart.id, selected);
-    for (const artifact of selected) embeddedArtifactIds.add(artifact.id);
-  }
+    })), [artifactParts, resourceStates]);
+  const inlineArtifactsByMarkdown = useMemo(() => {
+    const links = new Map<string, SelectedInlineArtifactLink[]>();
+    const embeddedArtifactIds = new Set<string>();
+    for (const markdownPart of markdownParts) {
+      const selected = selectInlineArtifactLinks(markdownPart.markdown, inlineArtifactCandidates.filter((candidate) => !embeddedArtifactIds.has(candidate.id)));
+      if (selected.length) links.set(markdownPart.id, selected);
+      for (const artifact of selected) embeddedArtifactIds.add(artifact.id);
+    }
+    return links;
+  }, [markdownParts, inlineArtifactCandidates]);
   const finalAnswerParts = turn.parts.filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> =>
     part.kind === "markdown" && turn.status === "completed" && part.final === true && part.channel === "answer",
   );
@@ -183,7 +187,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     label: citationFileName(part),
     title: [part.path ?? part.url ?? part.title, part.locator].filter(Boolean).join(" · "),
   })), [citationParts]);
-  const noticeParts = turn.parts.filter((part): part is NoticePart => part.kind === "notice");
+  const noticeParts = useMemo(() => turn.parts.filter((part): part is NoticePart => part.kind === "notice"), [turn.parts]);
   const importantNoticeParts = noticeParts.filter((part) => part.level === "warning" || part.level === "error");
   const backgroundNoticeParts = noticeParts.filter((part) => part.level !== "warning" && part.level !== "error");
   const publicSources = useMemo(() => extractPublicSources(turn), [turn]);
@@ -200,14 +204,6 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     : turn.status === "completed" ? (language === "zh" ? "已完成" : "Completed")
     : turn.status === "error" ? (language === "zh" ? "失败" : "Failed")
     : (language === "zh" ? "已停止" : "Stopped");
-  const inferredEnd = turn.status === "running" ? now : completedAt;
-  const inferredDuration = startedAt !== undefined && inferredEnd !== undefined && inferredEnd > startedAt
-    ? inferredEnd - startedAt
-    : undefined;
-  const durationMs = turn.meta?.durationMs !== undefined && turn.meta.durationMs > 0
-    ? turn.meta.durationMs
-    : inferredDuration;
-  const durationLabel = durationMs === undefined ? "" : formatRunDuration(durationMs, language);
   const backendLabel = formatBackendLabel(turn.meta?.backend);
   const statusMeta = ["OpenDrSai", backendLabel, turn.meta?.workspaceLabel].filter(Boolean).join(" · ");
   const runCounts = processPresentation.counts;
@@ -329,7 +325,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
         <summary className="structured-run-status" title={statusMeta}>
           <span className="structured-run-context">{statusContext}</span>
           <span className="structured-run-actions">
-            <span className={`structured-turn-status status-${turn.status}`}>{turnStatusLabel}{durationLabel ? ` · ${durationLabel}` : ""}</span>
+            <span className={`structured-turn-status status-${turn.status}`}>{turnStatusLabel}<TurnDuration running={turn.status === "running"} startedAt={startedAt} completedAt={completedAt} durationMs={turn.meta?.durationMs} language={language} /></span>
             {runCounts.length ? <span className="structured-run-counts" aria-label={language === "zh" ? "运行步骤计数" : "Run step counts"}>{runCounts.map((item) => <small key={item.key}>{item.label} {item.count}</small>)}</span> : null}
             {reproducibilityLevel === "partial" || reproducibilityLevel === "unavailable" ? <span className={`structured-reproducibility level-${reproducibilityLevel}`}>{reproducibilitySummaryLabel(reproducibilityLevel, language)}</span> : null}
             <span className="structured-process-label">{language === "zh" ? "过程" : "Process"}</span>
@@ -343,7 +339,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
             timeline={turn.processTimeline}
             reasoningParts={reasoningParts}
             progressParts={progressParts}
-            markdownParts={turn.parts.filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> => part.kind === "markdown")}
+            markdownParts={markdownParts}
             activities={turn.activities.filter((activity) => !activity.subtaskId)}
             subtaskParts={subtaskParts}
             language={language}
@@ -371,7 +367,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
         </div> : null}
       </details> : <header className="structured-run-status" title={statusMeta}>
         <span className="structured-run-context">{statusContext}</span>
-        <span className={`structured-turn-status status-${turn.status}`}>{turnStatusLabel}{durationLabel ? ` · ${durationLabel}` : ""}</span>
+        <span className={`structured-turn-status status-${turn.status}`}>{turnStatusLabel}<TurnDuration running={turn.status === "running"} startedAt={startedAt} completedAt={completedAt} durationMs={turn.meta?.durationMs} language={language} /></span>
         {runCounts.length ? <span className="structured-run-counts" aria-label={language === "zh" ? "运行步骤计数" : "Run step counts"}>{runCounts.map((item) => <small key={item.key}>{item.label} {item.count}</small>)}</span> : null}
         {reproducibilityLevel === "partial" || reproducibilityLevel === "unavailable" ? <span className={`structured-reproducibility level-${reproducibilityLevel}`}>{reproducibilitySummaryLabel(reproducibilityLevel, language)}</span> : null}
       </header>}
@@ -523,12 +519,19 @@ function resourceStateLabel(
   return labels[state];
 }
 
+const publicSourcePartCache = new WeakMap<StructuredAssistantPart, string[]>();
+
 function extractPublicSources(turn: StructuredTurnState): Array<{ url: string; label: string }> {
   const urls: string[] = [];
   for (const part of turn.parts) {
-    if (part.kind === "citation" && part.url?.startsWith("https://")) urls.push(part.url);
-    if (part.kind !== "markdown") continue;
-    urls.push(...(part.markdown.match(/https:\/\/[^\s<>\]\[(){}"']+/g) ?? []).map((url) => url.replace(/[.,;:!?]+$/, "")));
+    let partUrls = publicSourcePartCache.get(part);
+    if (!partUrls) {
+      partUrls = [];
+      if (part.kind === "citation" && part.url?.startsWith("https://")) partUrls.push(part.url);
+      if (part.kind === "markdown") partUrls.push(...(part.markdown.match(/https:\/\/[^\s<>\]\[(){}"']+/g) ?? []).map((url) => url.replace(/[.,;:!?]+$/, "")));
+      publicSourcePartCache.set(part, partUrls);
+    }
+    urls.push(...partUrls);
   }
   return [...new Set(urls)].map((url) => {
     try { return { url, label: new URL(url).hostname.replace(/^www\./, "") }; }
@@ -895,6 +898,7 @@ function ActivityTimelineItem({
     return <div className={`structured-timeline-activity structured-timeline-tool ${activity.status} structured-tool-category-${activity.toolCategory ?? "generic"}`}>
       <div className="structured-tool-header" onClick={hasDetail ? () => setExpanded((v) => !v) : undefined} role={hasDetail ? "button" : undefined} tabIndex={hasDetail ? 0 : undefined}>
         <ActivityStatusIcon status={activity.status} />
+        <ActivityStatusBadge status={activity.status} language={language} />
         <span className="structured-tool-name">{activity.toolName}</span>
         <span className="structured-tool-label">{label}</span>
         {showDuration && activity.durationMs !== undefined ? <time className="structured-tool-duration">{formatRunDuration(activity.durationMs, language)}</time> : null}
@@ -943,6 +947,7 @@ function AggregatedActivityDetails({
     <div className="structured-activity-window" data-activity-window-start={window.start} data-activity-window-end={window.end}>
       {groups.slice(window.start, window.end).map((group) => <div className={`structured-activity-group ${group.status}`} key={group.id}>
         <ActivityStatusIcon status={group.status} />
+        <ActivityStatusBadge status={group.status} language={language} />
         <span style={{ display: "flex", alignItems: "baseline", gap: "5px", minWidth: 0 }}>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.label}</span>
           {group.kind === "tool" && group.toolName ? <small className="structured-activity-tool-name" title={group.toolName}>{group.toolName}</small> : null}
@@ -979,6 +984,26 @@ function ActivityStatusIcon({
   if (status === "completed") return <CheckCircle2 size={16} aria-hidden="true" />;
   if (status === "error") return <AlertCircle size={16} aria-hidden="true" />;
   return <CircleEllipsis size={16} aria-hidden="true" />;
+}
+
+/** Human-readable execution state, shown next to the status icon. */
+function activityStatusLabel(status: StructuredActivityEvent["status"], language: "en" | "zh"): string {
+  const zh = language === "zh";
+  if (status === "completed") return zh ? "已完成" : "Done";
+  if (status === "error") return zh ? "失败" : "Failed";
+  if (status === "cancelled") return zh ? "已取消" : "Cancelled";
+  if (status === "running") return zh ? "执行中" : "Running";
+  return zh ? "等待中" : "Pending";
+}
+
+function ActivityStatusBadge({
+  status,
+  language,
+}: {
+  status: StructuredActivityEvent["status"];
+  language: "en" | "zh";
+}): React.JSX.Element {
+  return <span className={`structured-tool-status ${status}`}>{activityStatusLabel(status, language)}</span>;
 }
 
 function formatRunDuration(durationMs: number, language: "en" | "zh"): string {
@@ -1581,3 +1606,17 @@ function userFacingNotice(message: string, language: "en" | "zh"): string {
   }
   return message;
 }
+
+const TurnDuration = memo(function TurnDuration({ running, startedAt, completedAt, durationMs, language }: {
+  running: boolean;
+  startedAt?: number;
+  completedAt?: number;
+  durationMs?: number;
+  language: "en" | "zh";
+}): React.JSX.Element | null {
+  const now = useStreamingClock(running);
+  const end = running ? now : completedAt;
+  const elapsed = durationMs !== undefined && durationMs > 0 ? durationMs
+    : startedAt !== undefined && end !== undefined && end > startedAt ? end - startedAt : undefined;
+  return elapsed === undefined ? null : <> · {formatRunDuration(elapsed, language)}</>;
+});

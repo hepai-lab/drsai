@@ -143,6 +143,17 @@ function applyItemDelta(
   const index = snapshot.messages.findIndex((message) => message.id === patch.messageId);
   if (index < 0) throw new Error("thread_snapshot_patch_delta_target_missing");
   const message = snapshot.messages[index];
+  const updated = applyMessageDelta(message, patch);
+  const messages = snapshot.messages.map((candidate, candidateIndex) => candidateIndex === index ? updated : candidate);
+  if (messages.length !== patch.messageCount) throw new Error("thread_snapshot_patch_count_mismatch");
+  return { ...snapshot, messages, messageCount: patch.messageCount,
+    updatedAt: Math.max(snapshot.updatedAt, patch.updatedAt) };
+}
+
+function applyMessageDelta(
+  message: DesktopThreadSnapshot["messages"][number],
+  patch: Extract<DesktopThreadSnapshotPatchEvent["patch"], { kind: "item.delta" }>,
+): DesktopThreadSnapshot["messages"][number] {
   const turn = message.structuredTurn;
   if (!turn) throw new Error("thread_snapshot_patch_delta_turn_missing");
   const kind = patch.delta.kind;
@@ -196,13 +207,9 @@ function applyItemDelta(
     return { ...activity, output: `${typeof activity.output === "string" ? activity.output : ""}${patch.delta.text}` };
   });
   if (!matched) throw new Error(`thread_snapshot_patch_delta_kind_unsupported:${kind}`);
-  const updated = { ...message, content, reasoningContent,
+  return { ...message, content, reasoningContent,
     lastEventAt: Math.max(message.lastEventAt || 0, patch.updatedAt),
     structuredTurn: { ...turn, parts, activities } };
-  const messages = snapshot.messages.map((candidate, candidateIndex) => candidateIndex === index ? updated : candidate);
-  if (messages.length !== patch.messageCount) throw new Error("thread_snapshot_patch_count_mismatch");
-  return { ...snapshot, messages, messageCount: patch.messageCount,
-    updatedAt: Math.max(snapshot.updatedAt, patch.updatedAt) };
 }
 
 export function applyThreadSnapshotPatchBatch(
@@ -212,11 +219,29 @@ export function applyThreadSnapshotPatchBatch(
 ): { snapshot: DesktopThreadSnapshot; appliedSequence: number } {
   let candidate = snapshot;
   let appliedSequence = 0;
+  let indexes: Map<string, number> | undefined;
+  let writableMessages: DesktopThreadSnapshot["messages"] | undefined;
   const events = rawEvents.map(decodeThreadSnapshotPatchEvent)
     .sort((left, right) => left.sessionSequence - right.sessionSequence);
   for (const event of events) {
     if (event.generation !== generation) throw new Error("thread_snapshot_patch_generation_mismatch");
-    candidate = applyThreadSnapshotPatch(candidate, event);
+    if (event.threadId !== snapshot.threadId) throw incompatible();
+    if (event.patch.kind === "item.delta") {
+      // Index and copy the history once per contiguous delta batch, not per token.
+      if (!indexes) indexes = new Map(candidate.messages.map((message, index) => [message.id, index]));
+      const index = indexes.get(event.patch.messageId);
+      if (index === undefined) throw new Error("thread_snapshot_patch_delta_target_missing");
+      if (candidate.messages.length !== event.patch.messageCount) throw new Error("thread_snapshot_patch_count_mismatch");
+      if (!writableMessages) writableMessages = candidate.messages.slice();
+      writableMessages[index] = applyMessageDelta(writableMessages[index], event.patch);
+      candidate = { ...candidate, messages: writableMessages,
+        messageCount: event.patch.messageCount,
+        updatedAt: Math.max(candidate.updatedAt, event.patch.updatedAt) };
+    } else if (event.patch.kind !== "connection.state") {
+      candidate = applyThreadSnapshotPatch(candidate, event);
+      indexes = undefined;
+      writableMessages = undefined;
+    }
     appliedSequence = Math.max(appliedSequence, event.sessionSequence);
   }
   return { snapshot: candidate, appliedSequence };

@@ -7,6 +7,15 @@ import type { SystemVoiceSynthesizer } from "../../../shared/main/voiceTts";
 
 const TTS_TIMEOUT_MS = 60_000;
 
+/** SpeechSynthesizer must run on STA; unread stdout can deadlock Electron's pipes. */
+export const WINDOWS_SPEECH_POWERSHELL_ARGS = [
+  "-STA",
+  "-NoProfile",
+  "-NonInteractive",
+  "-ExecutionPolicy",
+  "Bypass",
+] as const;
+
 export const synthesizeWithWindowsSpeech: SystemVoiceSynthesizer = async (request, parentSignal) => {
   const dir = await mkdtemp(join(tmpdir(), "opendrsai-tts-"));
   const scriptPath = join(dir, "speak.ps1");
@@ -60,15 +69,45 @@ ${voiceBlock}
 
 function runPowerShell(scriptPath: string, parentSignal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { windowsHide: true });
+    const child = spawn(
+      "powershell.exe",
+      [...WINDOWS_SPEECH_POWERSHELL_ARGS, "-File", scriptPath],
+      { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
+    );
     let stderr = "";
-    const finish = (error?: Error): void => error ? reject(error) : resolve();
-    const timer = setTimeout(() => { child.kill(); finish(new Error("Windows speech synthesis timed out.")); }, TTS_TIMEOUT_MS);
-    const onAbort = (): void => { child.kill(); finish(new DOMException("Cancelled", "AbortError")); };
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve();
+    };
+    const killTree = (): void => {
+      const pid = child.pid;
+      if (!pid) {
+        child.kill();
+        return;
+      }
+      spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("close", () => {
+        try { child.kill(); } catch { /* already gone */ }
+      });
+    };
+    const timer = setTimeout(() => {
+      killTree();
+      finish(new Error("Windows speech synthesis timed out."));
+    }, TTS_TIMEOUT_MS);
+    const onAbort = (): void => {
+      killTree();
+      finish(new DOMException("Cancelled", "AbortError"));
+    };
     parentSignal.addEventListener("abort", onAbort, { once: true });
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-    child.on("error", (error) => { clearTimeout(timer); parentSignal.removeEventListener("abort", onAbort); finish(error); });
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => { stderr += chunk; });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      parentSignal.removeEventListener("abort", onAbort);
+      finish(error);
+    });
     child.on("close", (code) => {
       clearTimeout(timer);
       parentSignal.removeEventListener("abort", onAbort);

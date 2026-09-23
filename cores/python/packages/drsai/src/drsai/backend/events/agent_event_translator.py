@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import hashlib
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -171,18 +172,51 @@ def _is_subagent_source(source: str | None) -> bool:
     return bool(source) and source.startswith("sub:")
 
 
-def _recover_pending_tool_id(state: TurnState, name: str) -> str:
-    """Map a tool result without call_id back onto a pending tool.start id."""
+def _namespace_tool_id(source: str, tool_id: str) -> str:
+    """Scope a tool call id to its emitting agent.
+
+    Parallel subagents share the parent Run's Item namespace
+    (``tool:{run_id}:{tool_id}`` in the Runtime journal) but each owns an
+    independent model client, so their provider-assigned call ids are drawn
+    from independent sequences and can collide (sequential ``call_0`` … or
+    identical millisecond fallbacks). Prefixing the subagent source makes the
+    id unique per subagent instance and keeps a sibling's ``tool.start`` from
+    landing on an already-completed Item.
+    """
+    if _is_subagent_source(source) and not tool_id.startswith(f"{source}:"):
+        return f"{source}:{tool_id}"
+    return tool_id
+
+
+def _synthesized_tool_id(prefix: str = "tool") -> str:
+    """Collision-resistant fallback when the provider omits FunctionCall.id."""
+    return f"{prefix}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
+
+
+def _recover_pending_tool_id(state: TurnState, name: str, source: str = "") -> str:
+    """Map a tool result without call_id back onto a pending tool.start id.
+
+    Only considers pending calls from the same agent (``source``); under
+    parallel subagents a name match from a sibling would otherwise steal that
+    sibling's pending call and complete the wrong Item.
+    """
     pending = state.pending_tool_calls
     if not pending:
         return ""
+    candidates = {
+        pending_id: entry
+        for pending_id, entry in pending.items()
+        if not _is_subagent_source(source) or pending_id.startswith(f"{source}:")
+    }
+    if not candidates:
+        return ""
     if name:
-        for pending_id, (pname, _pargs, _started) in pending.items():
+        for pending_id, (pname, _pargs, _started) in candidates.items():
             bare = pname.rsplit("] ", 1)[-1] if "] " in pname else pname
             if pname == name or bare == name:
                 return pending_id
-    if len(pending) == 1:
-        return next(iter(pending))
+    if len(candidates) == 1:
+        return next(iter(candidates))
     return ""
 
 
@@ -448,7 +482,8 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
                 continue
             # Some providers (esp. skill/tool paths) omit FunctionCall.id; Runtime
             # requires a non-empty call identity on every tool event.
-            tool_id = str(getattr(call, "id", None) or "").strip() or f"tool-{int(time.time() * 1000)}"
+            tool_id = str(getattr(call, "id", None) or "").strip() or _synthesized_tool_id()
+            tool_id = _namespace_tool_id(msg_source, tool_id)
             name = getattr(call, "name", "?")
             args = _parse_tool_args(getattr(call, "arguments", {}))
             state.pending_tool_calls[tool_id] = (name, args, time.time())
@@ -460,7 +495,9 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
             if is_sub:
                 payload["source"] = msg_source
                 payload["subagent_id"] = msg_source[4:]
-                payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
+                # Display label keeps the base agent name; the instance suffix
+                # after "/" only disambiguates parallel siblings.
+                payload["name"] = f"[{msg_source[4:].split('/', 1)[0]}] {name}"
             out.append(("tool.start", payload))
         return out
 
@@ -476,10 +513,13 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
             result_str = _safe_str(content)
             duration_ms = 0
             args: dict = {}
+            if tool_id:
+                tool_id = _namespace_tool_id(msg_source, tool_id)
             if not tool_id:
                 # Results sometimes omit call_id even when the matching start used
-                # a synthesised id (common when loading skills). Recover from pending.
-                tool_id = _recover_pending_tool_id(state, name)
+                # a synthesised id (common when loading skills). Recover from pending
+                # — scoped to this agent so parallel siblings cannot steal it.
+                tool_id = _recover_pending_tool_id(state, name, msg_source)
             if tool_id and tool_id in state.pending_tool_calls:
                 pname, pargs, started = state.pending_tool_calls.pop(tool_id)
                 if not name:
@@ -487,7 +527,7 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
                 args = pargs
                 duration_ms = int((time.time() - started) * 1000)
             if not tool_id:
-                tool_id = f"tool-orphan-{int(time.time() * 1000)}"
+                tool_id = _namespace_tool_id(msg_source, _synthesized_tool_id("tool-orphan"))
             payload = {
                 "tool_id": tool_id,
                 "name": name,
@@ -505,7 +545,7 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
             if is_sub:
                 payload["source"] = msg_source
                 payload["subagent_id"] = msg_source[4:]
-                payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
+                payload["name"] = f"[{msg_source[4:].split('/', 1)[0]}] {name}"
             out.append(("tool.complete", payload))
         return out
 

@@ -12,7 +12,15 @@ from .credentials import resolve_credential
 from .loader import ConfigError
 from .model_registry import find_model_capabilities
 from .provider_registry import BUILTIN_PROVIDERS
-from .schema import DrSaiConfig, ProviderConfig, ProviderInput, ResolvedModelConfig, SecretValue
+from .schema import (
+    DrSaiConfig,
+    ModelCapabilities,
+    ProviderConfig,
+    ProviderInput,
+    ProviderModelConfig,
+    ResolvedModelConfig,
+    SecretValue,
+)
 
 
 def resolve_model_config(
@@ -58,6 +66,9 @@ def resolve_model_config(
                 supported=capabilities.reasoning.supported or "reasoning" in model_config.capabilities,
             ),
         )
+    capabilities = _with_effective_responses_transport(
+        capabilities, model_config=model_config, provider_config=provider_config,
+    )
     return ResolvedModelConfig(
         model=model_config.upstream_id if model_config and model_config.upstream_id else model_name,
         provider=provider_config,
@@ -66,6 +77,28 @@ def resolve_model_config(
         metadata_source="builtin" if known else "generic-default",
         model_id=model_name,
     )
+
+
+def _with_effective_responses_transport(
+    capabilities: ModelCapabilities,
+    *,
+    model_config: ProviderModelConfig | None,
+    provider_config: ProviderConfig,
+) -> ModelCapabilities:
+    """Merge the declared OpenAI wire transport into the resolved capabilities.
+
+    Precedence: the model entry's own ``use_responses_api`` wins, then the
+    Provider-wide default, then nothing (``None``) which leaves the caller's
+    model-name inference in charge. Only OpenAI-protocol models participate:
+    anthropic/gemini clients never use the Responses API.
+    """
+
+    if provider_config.wire_api != "openai":
+        return replace(capabilities, use_responses_api=False)
+    declared = model_config.use_responses_api if model_config is not None else None
+    if declared is None:
+        declared = provider_config.use_responses_api
+    return replace(capabilities, use_responses_api=declared)
 
 
 def _resolve_provider(
@@ -155,6 +188,7 @@ def _resolve_provider(
         model_upstream_ids=user.model_upstream_ids if user else {},
         model_operations=user.model_operations if user else {},
         model_configs=user.model_configs if user else {},
+        use_responses_api=user.use_responses_api if user else None,
         disabled_models=user.disabled_models if user else (),
         shadowed_models=user.shadowed_models if user else (),
         user_models_error=user.user_models_error if user else None,
@@ -229,6 +263,9 @@ def resolve_model_ref(
                 supported=capabilities.reasoning.supported or "reasoning" in model_config.capabilities,
             ),
         )
+    capabilities = _with_effective_responses_transport(
+        capabilities, model_config=model_config, provider_config=provider_config,
+    )
     return ResolvedModelConfig(
         model=upstream_model_id,
         model_id=model_id,

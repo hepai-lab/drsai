@@ -136,7 +136,13 @@ function updateDocument(current: VoicePreferencesVNext, updates: Partial<VoicePr
   });
 }
 
-export function resolveVoiceSynthesisMode(mode: VoicePreferences["synthesisMode"], consent: boolean): VoicePreferences["synthesisMode"] { return mode === "provider" && consent ? "provider" : "system"; }
+export function resolveVoiceSynthesisMode(
+  mode: VoicePreferences["synthesisMode"],
+  consent: boolean,
+  remoteAvailable = true,
+): VoicePreferences["synthesisMode"] {
+  return mode === "provider" && consent && remoteAvailable ? "provider" : "system";
+}
 export function resolveAvailableVoiceName(preferred: string, available: readonly string[]): string { return preferred && available.includes(preferred) ? preferred : ""; }
 
 export function useVoicePreferences(): [VoicePreferences, (updates: Partial<VoicePreferences>) => void] {

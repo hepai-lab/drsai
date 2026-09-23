@@ -31,6 +31,7 @@ from drsai.backend.runtime.journal import SessionCursorExpired
 
 from .. import _errors, _oaep, _state
 from .._models import SessionCreateRequest, SessionUpdateRequest
+from .. import _stream_watchers
 
 api = APIRouter(tags=["sessions"])
 
@@ -118,15 +119,15 @@ async def session_oaep_snapshot(
         engine = _state.runtime_engine()
         snapshot = engine.oaep_snapshot(session_id, cursor=cursor, limit=limit)
         window = snapshot.get("window") or {}
-        if cursor is None and window.get("has_more") is False:
-            # The single page already is the whole Item set; re-reading the
-            # journal would be the same query twice.
-            checkpoint_items = snapshot["items"]
-        else:
-            checkpoint_items = engine.conversation_journal.oaep_items(
-                session_id, through_sequence=int(snapshot["snapshot_sequence"]),
-            )
-        return _oaep.migrate_snapshot(snapshot, checkpoint_items=checkpoint_items)
+        # Only an unpaginated first window is the full checkpoint Item set.
+        # All other windows use a streamed full digest on cache miss; never a
+        # page digest. The helper caches hashes/counts, not history bodies.
+        checkpoint_items = (
+            snapshot["items"] if cursor is None and window.get("has_more") is False else None
+        )
+        return _oaep.migrate_snapshot(
+            snapshot, checkpoint_items=checkpoint_items, journal=engine.conversation_journal,
+        )
 
 
 @api.get("/v1/sessions/{session_id}/oaep-events", operation_id="listSessionEvents")
@@ -165,32 +166,40 @@ async def session_oaep_event_stream(
     with _errors.http_errors(not_found="Unknown Session"):
         _state.runtime_engine().list_oaep_events(session_id, after_sequence=after_sequence, limit=1)
 
+    # Register this connection so the orphan-run reaper knows the session still
+    # has a consumer (routes/runs.py). Registered before the first await in the
+    # generator body so no event can slip past an unregistered stream.
+    _stream_watchers.enter(session_id)
+
     async def stream():
         cursor = after_sequence
-        while not await raw_request.is_disconnected():
-            try:
-                # The journal wait is a blocking SQLite poll; off-loop keeps
-                # every other request served while this connection idles.
-                events = await asyncio.to_thread(
-                    _state.runtime_engine().wait_oaep_events,
-                    session_id,
-                    after_sequence=cursor,
-                    timeout=15.0,
-                    limit=500,
-                )
-            except SessionCursorExpired:
-                return
-            if not events:
-                # Keeps proxies and the renderer's own idle timer from closing
-                # a healthy but quiet stream.
-                yield ": heartbeat\n\n"
-                continue
-            for event in events:
-                cursor = int(event["sequence"])
-                payload = json.dumps(
-                    _oaep.migrate_event(event), ensure_ascii=False, separators=(",", ":"),
-                )
-                yield f"id: {cursor}\nevent: oaep.event\ndata: {payload}\n\n"
+        try:
+            while not await raw_request.is_disconnected():
+                try:
+                    # The journal wait is a blocking SQLite poll; off-loop keeps
+                    # every other request served while this connection idles.
+                    events = await asyncio.to_thread(
+                        _state.runtime_engine().wait_oaep_events,
+                        session_id,
+                        after_sequence=cursor,
+                        timeout=15.0,
+                        limit=500,
+                    )
+                except SessionCursorExpired:
+                    return
+                if not events:
+                    # Keeps proxies and the renderer's own idle timer from closing
+                    # a healthy but quiet stream.
+                    yield ": heartbeat\n\n"
+                    continue
+                for event in events:
+                    cursor = int(event["sequence"])
+                    payload = json.dumps(
+                        _oaep.migrate_event(event), ensure_ascii=False, separators=(",", ":"),
+                    )
+                    yield f"id: {cursor}\nevent: oaep.event\ndata: {payload}\n\n"
+        finally:
+            _stream_watchers.leave(session_id)
 
     return StreamingResponse(
         stream(),

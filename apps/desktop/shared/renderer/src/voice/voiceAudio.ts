@@ -49,26 +49,13 @@ export function calculateVoiceLevel(samples: Float32Array, previousLevel: number
   return smoothed < 0.012 ? 0 : smoothed;
 }
 
-export function getVoicePermissionError(error: unknown): string {
-  if (error instanceof DOMException) {
-    if (error.name === "NotAllowedError" || error.name === "SecurityError") {
-      return "Microphone permission was denied.";
-    }
-    if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
-      return "No microphone was found.";
-    }
-    if (error.name === "NotReadableError" || error.name === "TrackStartError") {
-      return "The microphone is already in use or unavailable.";
-    }
-  }
-  return error instanceof Error ? error.message : "Unable to start voice recording.";
-}
+export { getVoicePermissionError } from "./voiceFailureCopy";
 
-export function getVoiceStatusLabel(state: VoiceRecordingState, elapsedSeconds: number): string {
-  if (state === "requesting_permission") return "Requesting microphone permission...";
-  if (state === "recording") return `Recording ${formatVoiceDuration(elapsedSeconds)}`;
-  if (state === "processing") return "Preparing voice transcript...";
-  if (state === "failed") return "Voice input needs attention.";
+export function getVoiceStatusLabel(state: VoiceRecordingState, elapsedSeconds: number, zh = true): string {
+  if (state === "requesting_permission") return zh ? "正在请求麦克风权限…" : "Requesting microphone permission...";
+  if (state === "recording") return zh ? `正在录音 ${formatVoiceDuration(elapsedSeconds)}` : `Recording ${formatVoiceDuration(elapsedSeconds)}`;
+  if (state === "processing") return zh ? "正在准备语音识别…" : "Preparing voice transcript...";
+  if (state === "failed") return zh ? "语音输入需要处理" : "Voice input needs attention.";
   return "";
 }
 

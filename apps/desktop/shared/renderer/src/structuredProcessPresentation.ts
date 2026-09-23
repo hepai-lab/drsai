@@ -57,6 +57,10 @@ export function buildStructuredProcessPresentation(
   const fileActivities = turn.activities.filter((activity) => activity.kind === "file_change");
   const changedFiles = new Set(fileActivities.map((activity) => activity.kind === "file_change" ? activity.path : "").filter(Boolean));
   const operationCount = toolActivities.length;
+  // "已完成 N 项操作" must only count tools that actually reported success:
+  // failed / cancelled / unconfirmed executions are surfaced separately so the
+  // summary cannot claim a turn succeeded when tools errored.
+  const failedOperationCount = toolActivities.filter((activity) => activity.status === "error" || activity.status === "cancelled").length;
   const approvalCount = turn.parts.filter((part) => part.kind === "interaction" && part.interactionType === "approval").length;
   const subtaskCount = turn.activities.filter((activity) => activity.kind === "subtask").length
     + turn.parts.filter((part) => part.kind === "subtask").length;
@@ -75,7 +79,11 @@ export function buildStructuredProcessPresentation(
     ? [operationCount ? `${operationCount} 项操作` : "", changedFiles.size ? `${changedFiles.size} 个文件` : "", subtaskCount ? `${subtaskCount} 个子任务` : ""]
     : [operationCount ? `${operationCount} action${operationCount === 1 ? "" : "s"}` : "", changedFiles.size ? `${changedFiles.size} file${changedFiles.size === 1 ? "" : "s"}` : "", subtaskCount ? `${subtaskCount} subtask${subtaskCount === 1 ? "" : "s"}` : ""];
   const completionSummary = turn.status !== "running" && turn.status !== "pending" && summaryChunks.filter(Boolean).length
-    ? (language === "zh" ? `已完成 ${summaryChunks.filter(Boolean).join(" · ")}` : `Completed ${summaryChunks.filter(Boolean).join(" · ")}`)
+    ? failedOperationCount > 0
+      ? (language === "zh"
+        ? `共 ${operationCount} 项操作 · ${failedOperationCount} 项失败或未确认`
+        : `${operationCount} action${operationCount === 1 ? "" : "s"} · ${failedOperationCount} failed or unconfirmed`)
+      : (language === "zh" ? `已完成 ${summaryChunks.filter(Boolean).join(" · ")}` : `Completed ${summaryChunks.filter(Boolean).join(" · ")}`)
     : undefined;
 
   return {

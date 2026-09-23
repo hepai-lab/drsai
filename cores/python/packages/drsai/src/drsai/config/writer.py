@@ -137,12 +137,15 @@ def upsert_provider(
         "api_key_env",
         "api_key_credential",
         "requires_api_key",
+        "use_responses_api",
         "models_file",
         "user_models_file",
     }
     unknown = set(values) - allowed
     if unknown:
         raise ConfigError(f"Unsupported provider fields: {', '.join(sorted(unknown))}")
+    if values.get("use_responses_api") is not None and not isinstance(values.get("use_responses_api"), bool):
+        raise ConfigError("use_responses_api must be a boolean")
     key_sources = [key for key in ("api_key", "api_key_env", "api_key_credential") if values.get(key)]
     if len(key_sources) > 1:
         raise ConfigError("Set only one of api_key, api_key_env, or api_key_credential")
@@ -187,6 +190,7 @@ def upsert_provider(
         "api_key_env",
         "api_key_credential",
         "requires_api_key",
+        "use_responses_api",
         "models_file",
         "user_models_file",
     ):
@@ -293,6 +297,7 @@ def _render_model_configs(
         token_limit = raw.get("token_limit")
         max_tokens = raw.get("max_tokens")
         reasoning_efforts = raw.get("reasoning_efforts", [])
+        use_responses_api = raw.get("use_responses_api")
         if alias is not None and (not isinstance(alias, str) or not alias.strip()):
             raise ConfigError(f"models.{model_id}.alias is invalid")
         if legacy_modalities is not None and ("input_modalities" in raw or "output_modalities" in raw):
@@ -309,6 +314,12 @@ def _render_model_configs(
         input_set, output_set = set(input_modalities), set(output_modalities)
         if "image_generation" in capability_set and "image" not in output_set:
             raise ConfigError(f"models.{model_id}.image_generation requires image output")
+        # Keep the two families disjoint: an image-generation entry must not
+        # also claim chat capabilities (see loader.py for the rationale).
+        if {"image_generation", "image_edit"} & capability_set and {"chat", "tool_calling", "reasoning"} & capability_set:
+            raise ConfigError(
+                f"models.{model_id} cannot combine image generation with chat capabilities"
+            )
         if "image_edit" in capability_set and not ("image" in input_set and "image" in output_set):
             raise ConfigError(f"models.{model_id}.image_edit requires image input and output")
         if "speech_to_text" in capability_set and not ("audio" in input_set and "text" in output_set):
@@ -332,6 +343,10 @@ def _render_model_configs(
             raise ConfigError(f"models.{model_id}.reasoning_efforts is invalid")
         if reasoning_efforts and "reasoning" not in capability_set:
             raise ConfigError(f"models.{model_id}.reasoning_efforts requires the reasoning capability")
+        if use_responses_api is not None and not isinstance(use_responses_api, bool):
+            raise ConfigError(f"models.{model_id}.use_responses_api is invalid")
+        if use_responses_api is not None and protocol != "openai":
+            raise ConfigError(f"models.{model_id}.use_responses_api requires api_protocol = 'openai'")
         rendered.extend([
             "\n",
             f"[models.{_toml_string(model_id.strip())}]\n",
@@ -344,6 +359,11 @@ def _render_model_configs(
             *([f"upstream_id = {_toml_string(upstream_id.strip())}\n"] if isinstance(upstream_id, str) and upstream_id.strip() else []),
             *([f"token_limit = {token_limit}\n"] if isinstance(token_limit, int) else []),
             *([f"max_tokens = {max_tokens}\n"] if isinstance(max_tokens, int) else []),
+            *(
+                [f"use_responses_api = {'true' if use_responses_api else 'false'}\n"]
+                if isinstance(use_responses_api, bool)
+                else []
+            ),
             *(
                 ["reasoning_efforts = [" + ", ".join(_toml_string(str(item)) for item in reasoning_efforts) + "]\n"]
                 if reasoning_efforts

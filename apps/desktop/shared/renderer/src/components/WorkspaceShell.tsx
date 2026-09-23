@@ -6,6 +6,8 @@ import {
   // Temporarily unused while Scheduled nav is hidden — keep for later reuse.
   // CalendarClock,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Cloud,
   Copy,
   FileText,
@@ -301,6 +303,7 @@ export function WorkspaceShell({
   const [openWorkbenchMenu, setOpenWorkbenchMenu] = useState<WorkbenchMenuId | null>(null);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [windowMaximized, setWindowMaximized] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(true);
   const [skillsOpen, setSkillsOpen] = useState(true);
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
@@ -385,6 +388,13 @@ export function WorkspaceShell({
   const commandPaletteResultsRef = useRef<HTMLElement | null>(null);
   const contentSearchRequestRef = useRef(0);
   const zh = language === "zh";
+  const showCustomWindowControls = platformId !== "macos";
+
+  useEffect(() => {
+    if (!showCustomWindowControls) return;
+    return desktopApi.onWindowMaximizedChanged(setWindowMaximized);
+  }, [showCustomWindowControls]);
+
   const userInitials = getUserInitials(user, zh);
   const workbenchMenus: Array<{ id: WorkbenchMenuId; label: string }> = [
     { id: "file", label: zh ? "文件" : "File" },
@@ -473,7 +483,8 @@ export function WorkspaceShell({
     setSkillsOpen(true);
   }, [skillsChildActive]);
 
-  const isRightPanelExpanded = rightPanelExpanded && !rightPanelCollapsed;
+  const isConversationPage = activeNav === MENU_IDS.currentSession;
+  const isRightPanelExpanded = isConversationPage && rightPanelExpanded && !rightPanelCollapsed;
   const rightPanelExpandLabel = isRightPanelExpanded
     ? zh ? "还原聊天视图" : "Restore chat view"
     : zh ? "展开上下文环境" : "Expand context environment";
@@ -2251,18 +2262,46 @@ export function WorkspaceShell({
             </div>
           )}
         </div>
-        <div className="titlebar-window-divider" aria-hidden />
-        <button
-          className="titlebar-right-panel-toggle"
-          data-testid="titlebar-right-panel-toggle"
-          type="button"
-          onClick={onToggleRightPanel}
-          title={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
-          aria-label={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
-          aria-pressed={!rightPanelCollapsed}
-        >
-          <span aria-hidden />
-        </button>
+        {showCustomWindowControls ? (
+          <>
+            <div className="titlebar-window-divider" aria-hidden />
+            <div className="titlebar-window-controls" role="group" aria-label={zh ? "窗口控制" : "Window controls"}>
+              <button
+                type="button"
+                className="titlebar-window-btn"
+                data-testid="titlebar-window-minimize"
+                title={zh ? "最小化" : "Minimize"}
+                aria-label={zh ? "最小化" : "Minimize"}
+                onClick={() => void desktopApi.windowMinimize()}
+              >
+                <span className="titlebar-window-glyph titlebar-window-glyph-min" aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="titlebar-window-btn"
+                data-testid="titlebar-window-maximize"
+                title={windowMaximized ? (zh ? "还原" : "Restore") : (zh ? "最大化" : "Maximize")}
+                aria-label={windowMaximized ? (zh ? "还原" : "Restore") : (zh ? "最大化" : "Maximize")}
+                onClick={() => void desktopApi.windowToggleMaximize()}
+              >
+                <span
+                  className={`titlebar-window-glyph ${windowMaximized ? "titlebar-window-glyph-restore" : "titlebar-window-glyph-max"}`}
+                  aria-hidden
+                />
+              </button>
+              <button
+                type="button"
+                className="titlebar-window-btn titlebar-window-btn-close"
+                data-testid="titlebar-window-close"
+                title={zh ? "关闭" : "Close"}
+                aria-label={zh ? "关闭" : "Close"}
+                onClick={() => void desktopApi.windowClose()}
+              >
+                <span className="titlebar-window-glyph titlebar-window-glyph-close" aria-hidden />
+              </button>
+            </div>
+          </>
+        ) : null}
       </div>
 
       <aside className="sidebar">
@@ -2584,14 +2623,14 @@ export function WorkspaceShell({
 
       <main className="workspace">
         <section
-          className={`content-grid ${rightPanelCollapsed ? "right-collapsed" : ""} ${
+          className={`content-grid ${!isConversationPage || rightPanelCollapsed ? "right-collapsed" : ""} ${
             isRightPanelExpanded ? "right-expanded" : ""
           }`}
         >
           <section className="main-content-area">
             {mainContent}
           </section>
-          {!rightPanelCollapsed && !isRightPanelExpanded && (
+          {isConversationPage && !rightPanelCollapsed && !isRightPanelExpanded && (
             <div
               className="right-resize-handle"
               role="separator"
@@ -2601,7 +2640,7 @@ export function WorkspaceShell({
             />
           )}
 
-          {rightPanelActivated ? <aside className={`${rightPanelClassName} ${rightPanelCollapsed ? "is-collapsed" : ""}`} aria-hidden={rightPanelCollapsed || undefined}>
+          {isConversationPage && rightPanelActivated ? <aside className={`${rightPanelClassName} ${rightPanelCollapsed ? "is-collapsed" : ""}`} aria-hidden={rightPanelCollapsed || undefined}>
               <div className="right-tabs">
                 <div className="right-tabs-list" role="tablist" aria-label={zh ? "右侧面板" : "Side panel"}>
                 {visibleRightTabs.map(({ id, label }) => {
@@ -2664,6 +2703,19 @@ export function WorkspaceShell({
               )}
           </aside> : null}
         </section>
+        {isConversationPage ? (
+          <button
+            className="right-panel-float-toggle titlebar-right-panel-toggle"
+            data-testid="titlebar-right-panel-toggle"
+            type="button"
+            onClick={onToggleRightPanel}
+            title={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
+            aria-label={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
+            aria-pressed={!rightPanelCollapsed}
+          >
+            {rightPanelCollapsed ? <ChevronLeft size={18} strokeWidth={2.35} aria-hidden /> : <ChevronRight size={18} strokeWidth={2.35} aria-hidden />}
+          </button>
+        ) : null}
       </main>
       {threadMenu && (
         <div className="thread-context-layer" role="presentation" onMouseDown={closeThreadMenu}>
@@ -3702,6 +3754,7 @@ function SidebarButton({
   navId,
   nested,
   subnested,
+  badge,
   onClick,
 }: {
   active?: boolean;
@@ -3710,6 +3763,7 @@ function SidebarButton({
   navId?: NavId;
   nested?: boolean;
   subnested?: boolean;
+  badge?: number;
   onClick: () => void;
 }): React.JSX.Element {
   return (
@@ -3719,10 +3773,13 @@ function SidebarButton({
       data-nav-id={navId}
       onClick={onClick}
       title={label}
-      aria-label={label}
+      aria-label={badge ? `${label} ${badge}` : label}
     >
       <Icon size={16} />
       <span>{label}</span>
+      {badge ? (
+        <em className="sidebar-nav-badge" data-testid="timed-tasks-nav-badge" aria-hidden>{badge > 99 ? "99+" : badge}</em>
+      ) : null}
     </button>
   );
 }

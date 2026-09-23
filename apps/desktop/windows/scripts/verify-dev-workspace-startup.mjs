@@ -51,7 +51,9 @@ const desktopPaths = read("apps/desktop/shared/main/desktopPaths.ts");
 // ── Launcher entry (windows-desktop-dev.cmd) ────────────────────────────
 assertContains(launcherEntry, "-LaunchMode Development", "launcher entry");
 assertContains(launcherEntry, "%*", "launcher entry");
-// Dev/Prod share one gateway port in V2; the .cmd pins it before dev.ps1 runs.
+// Production stays on 28643; development uses a separate port (28644) so a stale
+// production Gateway is never adopted by `npm run dev` (see gatewayEnvironment.ts).
+// The .cmd pins the production port before dev.ps1 runs.
 assertContains(launcherEntry, 'set "DRSAI_DESKTOP_GATEWAY_PORT=28643"', "launcher entry");
 assertContains(launcherEntry, 'set "OPENDRSAI_DEV_GATEWAY_PORT=28643"', "launcher entry");
 // V2: Electron owns desktop_gateway, so the legacy management flags are cleared.
@@ -66,7 +68,7 @@ assertContains(launcher, "$env:DRSAI_REPO = $RepoRoot", "dev.ps1");
 assertContains(launcher, "$env:OPENDRSAI_RUNTIME_ROOT = $InstallDir", "dev.ps1");
 assertContains(launcher, '".drsai-prod" } else { ".drsai-dev"', "dev.ps1");
 assertContains(launcher, "[int]$GatewayPort = 0", "dev.ps1");
-assertContains(launcher, "$GatewayPort = 28643", "dev.ps1");
+assertContains(launcher, "$GatewayPort = 28644", "dev.ps1");
 assertContains(launcher, "desktop_gateway", "dev.ps1");
 assertContains(launcher, "$env:OPENDRSAI_ELECTRON_USER_DATA = $ElectronUserData", "dev.ps1");
 assertContains(launcher, "$env:OPENDRSAI_DEV_HOME = $DrsaiHome", "dev.ps1");

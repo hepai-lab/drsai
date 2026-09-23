@@ -94,6 +94,9 @@ class StructuredConversationProjector:
     activity_counter: int = 0
     reasoning_part_index: int = 0
     normalizer: _ThinkStreamNormalizer = field(default_factory=_ThinkStreamNormalizer)
+    # First-seen order of subtask ids per base agent name, used to render a
+    # stable "#n" instance suffix that distinguishes parallel invocations.
+    subtask_ordinals: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def markdown_part_id(self) -> str:
@@ -299,17 +302,52 @@ class StructuredConversationProjector:
             activity["durationMs"] = payload["duration_ms"]
         child_id = payload.get("subagent_id")
         if child_id:
-            activity["subtaskId"] = str(child_id)
+            # Must match the sanitized taskId assigned in _subtask(), otherwise
+            # the front end's `part.taskId === activity.subtaskId` grouping never
+            # matches and child tool cards escape the subtask container.
+            activity["subtaskId"] = self._sanitize_subtask_id(str(child_id))
+            # Re-label the "[base] tool" display prefix with the instance
+            # suffix so parallel siblings' tool cards are distinguishable even
+            # when rendered outside their subtask container.
+            display = self._subtask_display_name(str(payload.get("source") or ""), activity["subtaskId"])
+            title = str(activity.get("title") or "")
+            if display and title.startswith("[") and "]" in title:
+                activity["title"] = f"[{display}]{title.split(']', 1)[1]}"
         self.activities[activity["id"]] = activity
         return [*pre_events, self._event("activity.updated", source, activity=activity)]
+
+    @staticmethod
+    def _sanitize_subtask_id(raw: str) -> str:
+        """Canonical subtask id: keeps ``:``/``.``/``-``/``_``, folds ``/`` etc."""
+        return re.sub(r"[^a-zA-Z0-9_.:-]+", "-", raw).strip("-") or "subtask"
+
+    def _subtask_display_name(self, tag: str, stable_key: str) -> str:
+        """Display name for one subagent invocation.
+
+        ``sub:<name>/<instance>`` tags distinguish parallel invocations of the
+        same subagent type. The base name alone renders identical cards, so an
+        instance gets a stable ``#n`` suffix (first-seen order within the turn).
+        """
+        tag = tag.replace("sub:", "", 1)
+        base_name, sep, _instance = tag.partition("/")
+        base_name = base_name or "Subtask"
+        if not sep:
+            return base_name
+        instances = self.subtask_ordinals.setdefault(base_name, [])
+        if stable_key not in instances:
+            instances.append(stable_key)
+        return f"{base_name} #{instances.index(stable_key) + 1}"
 
     def _subtask(self, event_type: str, payload: dict[str, Any], source: str) -> list[dict[str, Any]]:
         # Prefer an explicit child identity when supplied. Source is a
         # display/transport label and is not unique for parallel invocations
         # of the same skills_agent.
         raw_task_id = str(payload.get("subagent_id") or payload.get("task_id") or source)
-        source_id = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", raw_task_id).strip("-") or "subtask"
+        source_id = self._sanitize_subtask_id(raw_task_id)
         part_id = f"{self.turn_id}:subtask:{source_id}"
+        # ``sub:<name>/<instance>`` tags distinguish parallel invocations of the
+        # same subagent type; parallel siblings get a stable "#n" suffix.
+        display_name = self._subtask_display_name(source, source_id)
         part = self.parts.get(part_id)
         events: list[dict[str, Any]] = []
         if part is None:
@@ -318,8 +356,8 @@ class StructuredConversationProjector:
                 "kind": "subtask",
                 "status": "running",
                 "taskId": source_id,
-                "title": str(payload.get("title") or source.replace("sub:", "") or "Subtask"),
-                "agentName": source.replace("sub:", ""),
+                "title": str(payload.get("title") or display_name),
+                "agentName": display_name,
             }
             self.parts[part_id] = part
             events.append(self._event("part.started", source, part=dict(part)))

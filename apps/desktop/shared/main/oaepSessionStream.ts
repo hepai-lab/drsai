@@ -1,10 +1,13 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { OaepEvent, OaepItem, OaepRun, OaepSnapshot, RuntimeClient } from "./runtimeClient";
 import { isRuntimeClientGenerationInvalidated, retainRuntimeClient } from "./runtimeClient";
-import { assertOaepEventIntegrity, assertOaepSnapshotIntegrity } from "./oaepIntegrity";
+import { assertOaepEventIntegrity, assertOaepSnapshotIntegrity, oaepProjectionDigest } from "./oaepIntegrity";
 
 export interface OaepSessionState {
   sessionId: string;
   cursor: number;
+  /** Checkpoint pagination is independent of the live Event cursor. */
+  history?: { nextCursor: string | null; hasMore: boolean; totalItems: number; reloadRequired?: boolean };
   items: ReadonlyMap<string, OaepItem>;
   /**
    * Presentation-only delta accumulators for runtimes that emit a delta
@@ -59,10 +62,26 @@ export interface OaepSessionMetrics {
   protocolViolations: number;
   listenerFailures: number;
   backpressureRecoveries: number;
+  listenerBackpressureWaits: number;
+  /** Maximum on any single listener (the admission-budget scope). */
+  listenerPeakPending: number;
+  listenerPeakBytes: number;
+  /** Aggregate executing + queued notifications across attached listeners. */
+  listenerPending: number;
+  listenerBytes: number;
+  listenerTotalPeakPending: number;
+  listenerTotalPeakBytes: number;
+  /** Settled admission waits (including removal); monotonic-clock milliseconds. */
+  listenerWaitMs: number;
+  listenerMaxWaitMs: number;
+  listenerMaxQueueDelayMs: number;
+  listenerMaxTerminalDelayMs: number;
   fatalErrors: number;
   degradedErrors: number;
 }
 
+/** State maps belong to this listener's FIFO projection, stable until its returned
+ * Promise settles. Do not mutate or retain them as immutable historical snapshots. */
 export interface OaepSessionListener {
   onSnapshot?(state: OaepSessionState, source: "snapshot" | "resnapshot"): void | Promise<void>;
   onReplayPage?(count: number, fromSequence: number, toSequence: number, hasMore: boolean): void | Promise<void>;
@@ -79,6 +98,7 @@ export interface OaepSessionSubscription {
   readonly done: Promise<void>;
   readonly terminalError: unknown;
   readonly phase: OaepStreamPhase;
+  loadEarlier(cursor: string, signal?: AbortSignal): Promise<void>;
   stop(): void;
 }
 
@@ -86,6 +106,21 @@ class OaepEventGap extends Error {
   constructor() {
     super("Runtime OAEP Event sequence has a gap.");
   }
+}
+
+// Bound only the rebase journal for unloaded Items, not canonical Event delivery.
+export const MAX_PENDING_OAEP_DELTAS = 2048;
+export const MAX_PENDING_OAEP_DELTA_BYTES = 4 * 1024 * 1024;
+
+class OaepResnapshotRequired extends Error {
+  constructor() { super("OAEP historical delta buffer requires a fresh checkpoint."); }
+}
+
+function historyCursorStale(cause?: unknown): Error {
+  // Electron may serialize only Error.message; retain the machine-readable tag there too.
+  return Object.assign(new Error("oaep_history_cursor_stale: History checkpoint expired or changed; reload the latest window."), {
+    code: "oaep_history_cursor_stale", retryable: true, cause,
+  });
 }
 
 function isCursorExpired(error: unknown): boolean {
@@ -384,7 +419,14 @@ export function reduceOaepEvent(
   }
 }
 
-async function consumeSse(
+// Budgets include the executing callback. Bytes are serialized UTF-8 payload,
+// not a claim about total JS heap (canonical state and transport are separate).
+export const MAX_OAEP_LISTENER_PENDING = 256;
+export const MAX_OAEP_LISTENER_BYTES = 8 * 1024 * 1024;
+export const MAX_OAEP_SSE_FRAME_BYTES = 8 * 1024 * 1024;
+const LISTENER_CONTROL_BYTES = 256;
+
+export async function consumeSse(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal,
   onEvent: (event: OaepEvent) => Promise<void>,
@@ -393,23 +435,37 @@ async function consumeSse(
   const abortReader = () => { void reader.cancel(signal.reason).catch(() => undefined); };
   signal.addEventListener("abort", abortReader, { once: true });
   const decoder = new TextDecoder();
-  let buffer = "";
+  // Scan bytes before decoding, so even a single oversized transport chunk is
+  // never copied into an unbounded string. CRLF (including split CR/LF), CR,
+  // UTF-8 code points and frame delimiters may all straddle read boundaries.
+  let frame = new Uint8Array(4096);
+  let length = 0;
+  let lineHasBytes = false;
+  let skipLf = false;
   try {
     while (!signal.aborted) {
       const { value, done } = await reader.read();
-      buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
-      let consumed = 0;
-      let boundary = buffer.indexOf("\n\n", consumed);
-      while (boundary >= 0) {
-        const frame = buffer.slice(consumed, boundary);
-        consumed = boundary + 2;
-        const data = frame.split("\n").filter((line) => line.startsWith("data:"))
+      if (signal.aborted || done) return; // SSE does not dispatch an unfinished EOF frame.
+      for (const byte of value) {
+        if (signal.aborted) return;
+        if (skipLf && byte === 10) { skipLf = false; continue; }
+        skipLf = false;
+        if (length >= MAX_OAEP_SSE_FRAME_BYTES) throw new Error("oaep_sse_frame_too_large");
+        if (length === frame.length) {
+          const grown = new Uint8Array(Math.min(frame.length * 2, MAX_OAEP_SSE_FRAME_BYTES));
+          grown.set(frame);
+          frame = grown;
+        }
+        frame[length++] = byte;
+        if (byte !== 10 && byte !== 13) { lineHasBytes = true; continue; }
+        skipLf = byte === 13;
+        if (lineHasBytes) { lineHasBytes = false; continue; }
+        const data = decoder.decode(frame.subarray(0, length)).split(/\r\n|\r|\n/)
+          .filter((line) => line.startsWith("data:"))
           .map((line) => line.slice(5).trimStart()).join("\n");
+        length = 0;
         if (data) await onEvent(JSON.parse(data) as OaepEvent);
-        boundary = buffer.indexOf("\n\n", consumed);
       }
-      if (consumed > 0) buffer = buffer.slice(consumed);
-      if (done) return;
     }
   } finally {
     signal.removeEventListener("abort", abortReader);
@@ -418,7 +474,32 @@ async function consumeSse(
   }
 }
 
-/** Session heartbeats that must not consume the bounded listener dispatch budget. */
+interface ListenerProjection extends OaepSessionState {
+  items: Map<string, OaepItem>;
+  deltaShadows: Map<string, OaepDeltaShadow>;
+  runs: Map<string, OaepRun>;
+}
+
+function copyProjection(state: OaepSessionState): ListenerProjection {
+  return { ...state, items: new Map(state.items), runs: new Map(state.runs),
+    deltaShadows: new Map(state.deltaShadows) };
+}
+
+interface ListenerQueue {
+  state: ListenerProjection;
+  tail: Promise<void>;
+  pending: number;
+  bytes: number;
+  changed: Promise<void>;
+  wake: () => void;
+  removed: Promise<void>;
+  remove: () => void;
+}
+
+// Callback-initiated history publication otherwise waits for its own FIFO tail.
+const listenerContext = new AsyncLocalStorage<{ controller: SharedOaepSessionController; active: boolean }>();
+
+/** Presentation noise; state-bearing variants still update the listener FIFO. */
 export function isPresentationNoiseOaepEvent(event: OaepEvent): boolean {
   if (event.type === "event.session.updated") return true;
   if (event.type === "event.run.resumed") {
@@ -433,11 +514,29 @@ class SharedOaepSessionController {
   readonly deltaShadows = new Map<string, OaepDeltaShadow>();
   readonly runs = new Map<string, OaepRun>();
   readonly listeners = new Set<OaepSessionListener>();
-  readonly listenerQueues = new Map<OaepSessionListener, Promise<void>>();
-  readonly listenerPending = new Map<OaepSessionListener, number>();
-  readonly listenerNeedsSnapshot = new Set<OaepSessionListener>();
+  readonly listenerQueues = new Map<OaepSessionListener, ListenerQueue>();
   readonly abort = new AbortController();
   cursor = 0;
+  private checkpoint?: OaepSnapshot["checkpoint"];
+  private pagedRunIds = new Set<string>();
+  private checkpointItems = new Map<string, OaepItem>();
+  private itemWaterlines = new Map<string, number>();
+  private pendingDeltas = new Map<string, { events: OaepEvent[]; bytes: number }>();
+  private pendingDeltaCount = 0;
+  private pendingDeltaBytes = 0;
+  private historyReloadRequired = false;
+  private resnapshotRequested = false;
+  private activeStreamAbort?: AbortController;
+  // Serialize mutation + admission, not callback completion or network reads.
+  // History publication cannot overtake an Event stalled on another listener.
+  private publicationTail: Promise<void> = Promise.resolve();
+  private publish<T>(action: () => Promise<T>): Promise<T> {
+    const result = this.publicationTail.then(action);
+    this.publicationTail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+  private historyCursor: string | null = null;
+  private historyRequest?: { cursor: string; promise: Promise<void> };
   retryAttempt = 0;
   readonly metrics: OaepSessionMetrics = {
     snapshots: 0,
@@ -448,6 +547,17 @@ class SharedOaepSessionController {
     protocolViolations: 0,
     listenerFailures: 0,
     backpressureRecoveries: 0,
+    listenerBackpressureWaits: 0,
+    listenerPeakPending: 0,
+    listenerPeakBytes: 0,
+    listenerPending: 0,
+    listenerBytes: 0,
+    listenerTotalPeakPending: 0,
+    listenerTotalPeakBytes: 0,
+    listenerWaitMs: 0,
+    listenerMaxWaitMs: 0,
+    listenerMaxQueueDelayMs: 0,
+    listenerMaxTerminalDelayMs: 0,
     fatalErrors: 0,
     degradedErrors: 0,
   };
@@ -492,17 +602,38 @@ class SharedOaepSessionController {
   }
 
   get state(): OaepSessionState {
-    return { sessionId: this.sessionId, cursor: this.cursor, items: this.items, deltaShadows: this.deltaShadows, runs: this.runs };
+    return { sessionId: this.sessionId, cursor: this.cursor,
+      history: { nextCursor: this.historyCursor, hasMore: Boolean(this.historyCursor),
+        totalItems: Math.max(this.checkpoint?.item_count ?? 0, this.items.size),
+        reloadRequired: this.historyReloadRequired && Boolean(this.historyCursor) }, items: this.items, deltaShadows: this.deltaShadows, runs: this.runs };
   }
 
   add(listener: OaepSessionListener): () => void {
     this.listeners.add(listener);
-    if (this.cursor > 0) this.dispatch(listener, () => listener.onSnapshot?.(this.state, "snapshot"), false);
+    if (!this.listenerQueues.has(listener)) {
+      const queue: ListenerQueue = { state: copyProjection(this.state), tail: Promise.resolve(), pending: 0, bytes: 0,
+        changed: Promise.resolve(), wake: () => undefined, removed: Promise.resolve(), remove: () => undefined };
+      queue.removed = new Promise<void>((resolve) => { queue.remove = resolve; });
+      queue.changed = new Promise<void>((resolve) => { queue.wake = resolve; });
+      this.listenerQueues.set(listener, queue);
+    }
+    if (this.checkpoint || this.metrics.snapshots > 0) {
+      const snapshot = copyProjection(this.state);
+      void this.dispatch(listener, () => this.deliverSnapshot(listener, snapshot, "snapshot"), false);
+    }
+    let removed = false;
     return () => {
+      if (removed) return;
+      removed = true;
       this.listeners.delete(listener);
+      const queue = this.listenerQueues.get(listener);
+      if (queue) {
+        this.metrics.listenerPending -= queue.pending;
+        this.metrics.listenerBytes -= queue.bytes;
+      }
+      this.listenerQueues.get(listener)?.wake();
+      this.listenerQueues.get(listener)?.remove();
       this.listenerQueues.delete(listener);
-      this.listenerPending.delete(listener);
-      this.listenerNeedsSnapshot.delete(listener);
       if (!this.listeners.size) {
         this.abort.abort("oaep_session_unused");
         if (!this.released) { this.released = true; this.releaseClient(); }
@@ -551,67 +682,116 @@ class SharedOaepSessionController {
     return true;
   }
 
-  private dispatch(
+  private async dispatch(
     listener: OaepSessionListener,
     invoke: () => void | Promise<void> | undefined,
     recoverWithSnapshot = true,
-    bounded = false,
-  ): void {
-    const pending = this.listenerPending.get(listener) ?? 0;
-    if (bounded && pending >= 256) {
-      this.listenerNeedsSnapshot.add(listener);
-      return;
+    bytes = LISTENER_CONTROL_BYTES,
+    terminal = false,
+  ): Promise<void> {
+    const queue = this.listenerQueues.get(listener);
+    if (!queue) return;
+    // All producers await admission, never the callback itself. No Promise
+    // chain is extended while full, and stop wakes admission even when the
+    // currently executing user callback never settles.
+    const blocked = queue.pending >= MAX_OAEP_LISTENER_PENDING || queue.bytes + bytes > MAX_OAEP_LISTENER_BYTES;
+    const waitingAt = blocked ? performance.now() : 0;
+    if (blocked) this.metrics.listenerBackpressureWaits += 1;
+    try {
+      while (queue.pending >= MAX_OAEP_LISTENER_PENDING || queue.bytes + bytes > MAX_OAEP_LISTENER_BYTES) {
+        await queue.changed;
+        if (this.listenerQueues.get(listener) !== queue) return;
+      }
+    } finally {
+      if (blocked) {
+        const elapsed = performance.now() - waitingAt;
+        this.metrics.listenerWaitMs += elapsed;
+        this.metrics.listenerMaxWaitMs = Math.max(this.metrics.listenerMaxWaitMs, elapsed);
+      }
     }
-    this.listenerPending.set(listener, pending + 1);
-    const previous = this.listenerQueues.get(listener) ?? Promise.resolve();
-    const next = previous.then(async () => {
-      if (!this.listeners.has(listener)) return;
-      await invoke();
-    }).catch(async () => {
-      this.metrics.listenerFailures += 1;
-      if (!recoverWithSnapshot || !this.listeners.has(listener) || !listener.onSnapshot) return;
+    if (this.listenerQueues.get(listener) !== queue) return;
+    const enqueuedAt = performance.now();
+    this.metrics.listenerPending += 1;
+    this.metrics.listenerBytes += bytes;
+    this.metrics.listenerTotalPeakPending = Math.max(this.metrics.listenerTotalPeakPending, this.metrics.listenerPending);
+    this.metrics.listenerTotalPeakBytes = Math.max(this.metrics.listenerTotalPeakBytes, this.metrics.listenerBytes);
+    queue.pending += 1;
+    queue.bytes += bytes;
+    this.metrics.listenerPeakPending = Math.max(this.metrics.listenerPeakPending, queue.pending);
+    this.metrics.listenerPeakBytes = Math.max(this.metrics.listenerPeakBytes, queue.bytes);
+    queue.tail = queue.tail.then(async () => {
+      if (this.listenerQueues.get(listener) !== queue) return;
+      const delay = performance.now() - enqueuedAt;
+      this.metrics.listenerMaxQueueDelayMs = Math.max(this.metrics.listenerMaxQueueDelayMs, delay);
+      if (terminal) this.metrics.listenerMaxTerminalDelayMs = Math.max(this.metrics.listenerMaxTerminalDelayMs, delay);
+      const context = { controller: this, active: true };
       try {
-        await listener.onSnapshot(this.state, "resnapshot");
-      } catch {
-        this.metrics.listenerFailures += 1;
+        await listenerContext.run(context, async () => {
+          try { await invoke(); }
+          catch {
+            this.metrics.listenerFailures += 1;
+            if (!recoverWithSnapshot || this.listenerQueues.get(listener) !== queue || !listener.onSnapshot) return;
+            try { await listener.onSnapshot(queue.state, "resnapshot"); }
+            catch { this.metrics.listenerFailures += 1; }
+          }
+        });
+      } finally { context.active = false; }
+    }).finally(() => {
+      if (this.listenerQueues.get(listener) === queue) {
+        this.metrics.listenerPending -= 1;
+        this.metrics.listenerBytes -= bytes;
       }
-    });
-    this.listenerQueues.set(listener, next);
-    void next.finally(() => {
-      const remaining = Math.max(0, (this.listenerPending.get(listener) ?? 1) - 1);
-      if (remaining) this.listenerPending.set(listener, remaining);
-      else this.listenerPending.delete(listener);
-      if (this.listenerQueues.get(listener) === next) this.listenerQueues.delete(listener);
-      if (!remaining && this.listenerNeedsSnapshot.delete(listener) && this.listeners.has(listener)) {
-        this.metrics.backpressureRecoveries += 1;
-        this.dispatch(listener, () => listener.onSnapshot?.(this.state, "resnapshot"), false);
-      }
+      queue.pending -= 1;
+      queue.bytes -= bytes;
+      const wake = queue.wake;
+      queue.changed = new Promise<void>((resolve) => { queue.wake = resolve; });
+      wake();
     });
   }
 
-  private notifySnapshot(source: "snapshot" | "resnapshot"): void {
+  private deliverSnapshot(listener: OaepSessionListener, snapshot: OaepSessionState, source: "snapshot" | "resnapshot"): void | Promise<void> {
+    const queue = this.listenerQueues.get(listener);
+    if (!queue) return;
+    queue.state = copyProjection(snapshot);
+    return listener.onSnapshot?.(queue.state, source);
+  }
+
+  private async notifySnapshot(source: "snapshot" | "resnapshot"): Promise<void> {
     if (source === "snapshot") this.metrics.snapshots += 1;
     else this.metrics.resnapshots += 1;
-    for (const listener of this.listeners) {
-      this.dispatch(listener, () => listener.onSnapshot?.(this.state, source), false);
+    // Capture once per publication, not once per Event or per admission wait.
+    const snapshot = copyProjection(this.state);
+    for (const listener of [...this.listeners]) {
+      await this.dispatch(listener, () => this.deliverSnapshot(listener, snapshot, source), false);
     }
   }
 
-  private notifyEvent(event: OaepEvent, source: "replay" | "stream"): void {
-    if (isPresentationNoiseOaepEvent(event)) return;
-    // Never drop item/run events under backpressure — they are the streaming path.
-    // Noise session.updated previously filled the queue and starved item.delta.
-    const critical = event.type.startsWith("event.item.") || event.type.startsWith("event.run.");
-    for (const listener of this.listeners) {
-      this.dispatch(listener, () => listener.onEvent?.(event, this.state, source), true, !critical);
+  private async notifyEvent(event: OaepEvent, source: "replay" | "stream", bytes: number): Promise<void> {
+    const noise = isPresentationNoiseOaepEvent(event);
+    if (noise && !event.data.run && !event.data.item) return;
+    const history = this.state.history;
+    for (const listener of [...this.listeners]) {
+      await this.dispatch(listener, () => {
+        const state = this.listenerQueues.get(listener)!.state;
+        // A newly attached listener's baseline may already include this Event.
+        if (event.sequence <= state.cursor) return;
+        // Copy only the changed Run/Item through the reducer, never full history.
+        // Page Run summaries are provisional; canonical validation already ran.
+        const run = event.data.run as OaepRun | undefined;
+        if (run?.id) state.runs.delete(run.id);
+        reduceOaepEvent(state.items, state.runs, event, state.deltaShadows);
+        state.cursor = event.sequence;
+        state.history = history;
+        if (!noise) return listener.onEvent?.(event, state, source);
+      }, true, bytes, /^event\.run\.(completed|failed|cancelled)$/.test(event.type));
     }
   }
 
-  private notifyReplayPage(
+  private async notifyReplayPage(
     count: number, fromSequence: number, toSequence: number, hasMore: boolean,
-  ): void {
+  ): Promise<void> {
     for (const listener of this.listeners) {
-      this.dispatch(
+      await this.dispatch(
         listener,
         () => listener.onReplayPage?.(count, fromSequence, toSequence, hasMore),
         false,
@@ -619,25 +799,26 @@ class SharedOaepSessionController {
     }
   }
 
-  private notifyConnection(state: "connected" | "retrying" | "degraded", error?: unknown): void {
+  private async notifyConnection(state: "connected" | "retrying" | "degraded", error?: unknown): Promise<void> {
+    const attempt = this.retryAttempt;
     for (const listener of this.listeners) {
-      this.dispatch(listener, () => listener.onConnection?.(state, this.retryAttempt, error), false);
+      await this.dispatch(listener, () => listener.onConnection?.(state, attempt, error), false);
     }
   }
 
-  private notifyFatal(error: unknown): void {
+  private async notifyFatal(error: unknown): Promise<void> {
     for (const listener of this.listeners) {
-      this.dispatch(listener, () => listener.onFatal?.(error, this.state), false);
+      await this.dispatch(listener, () => listener.onFatal?.(error, this.listenerQueues.get(listener)!.state), false);
     }
   }
 
-  private transition(next: OaepStreamPhase): void {
+  private async transition(next: OaepStreamPhase): Promise<void> {
     if (this.phase === next && next === "retrying") return;
     assertOaepStreamTransition(this.phase, next);
     const previous = this.phase;
     this.phase = next;
     for (const listener of this.listeners) {
-      this.dispatch(listener, () => listener.onState?.(next, previous), false);
+      await this.dispatch(listener, () => listener.onState?.(next, previous), false);
     }
   }
 
@@ -655,23 +836,171 @@ class SharedOaepSessionController {
 
   private replaceSnapshot(snapshot: OaepSnapshot): void {
     assertOaepSnapshotIntegrity(snapshot);
-    if (snapshot.session.id !== this.sessionId || snapshot.snapshot_sequence < 0) {
-      throw new Error("Runtime OAEP snapshot is invalid.");
+    if (snapshot.session.id !== this.sessionId || snapshot.snapshot_sequence < this.cursor) {
+      throw new Error("oaep_snapshot_waterline_stale");
     }
+    // A journal gap makes *every* previous projection suspect, including old
+    // terminal Items, Runs and delta shadows outside the new snapshot window.
+    // Publish only this authoritative window; older content must be paged again.
+    this.historyReloadRequired = this.metrics.snapshots > 0;
+    this.historyRequest = undefined; // Old in-flight pages fail the checkpoint identity check.
     this.items.clear();
-    this.deltaShadows.clear();
     this.runs.clear();
-    snapshot.items.forEach((item) => this.items.set(item.id, item));
+    this.pagedRunIds.clear();
+    this.deltaShadows.clear();
+    this.itemWaterlines.clear();
+    this.pendingDeltas.clear();
+    this.pendingDeltaCount = 0;
+    this.pendingDeltaBytes = 0;
+    snapshot.items.forEach((item) => {
+      this.items.set(item.id, item);
+      this.itemWaterlines.set(item.id, snapshot.snapshot_sequence);
+    });
+    // A completed window needs no checkpoint baseline retained for pagination.
+    this.checkpointItems = snapshot.window?.has_more
+      ? new Map(snapshot.items.map((item) => [item.id, item])) : new Map();
     snapshot.runs.forEach((run) => this.runs.set(run.id, run));
+    this.checkpoint = snapshot.checkpoint;
+    this.historyCursor = snapshot.window?.next_cursor ?? null;
     this.cursor = snapshot.snapshot_sequence;
   }
 
-  private async accept(event: OaepEvent, source: "replay" | "stream"): Promise<void> {
+  loadEarlier(cursor: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    if (listenerContext.getStore()?.controller === this && listenerContext.getStore()?.active) {
+      return Promise.reject(new Error("oaep_listener_reentrant_history: schedule history loading outside the listener callback"));
+    }
+    if (this.resnapshotRequested || !cursor || cursor !== this.historyCursor) {
+      return Promise.reject(historyCursorStale());
+    }
+    if (this.historyRequest?.cursor === cursor) return this.historyRequest.promise;
+    if (this.historyRequest) return Promise.reject(historyCursorStale());
+    const checkpoint = this.checkpoint;
+    const promise = (async () => {
+      // The request belongs to the shared controller, not to one window's abort
+      // signal. An aborted caller must not cancel another window's same-page read.
+      let page: OaepSnapshot;
+      try {
+        page = await this.client.getOaepSnapshot(this.sessionId, { cursor, limit: 100, signal: this.abort.signal });
+      } catch (error) {
+        if (!isCursorExpired(error)) throw error;
+        // forceFresh reads share this controller: wake its stream so that the
+        // next publication actually carries a new checkpoint, not the old cache.
+        if (this.checkpoint === checkpoint && this.historyCursor === cursor) {
+          this.resnapshotRequested = true;
+          this.activeStreamAbort?.abort("oaep_history_cursor_expired");
+        }
+        throw historyCursorStale(error);
+      }
+      await this.publish(async () => {
+        this.abort.signal.throwIfAborted();
+        assertOaepSnapshotIntegrity(page);
+        if (this.resnapshotRequested || this.checkpoint !== checkpoint || this.historyCursor !== cursor) {
+          throw historyCursorStale();
+        }
+        if (!checkpoint || page.session.id !== this.sessionId || !page.window
+          || page.snapshot_sequence !== checkpoint.sequence
+          || page.checkpoint?.snapshot_hash !== checkpoint.snapshot_hash
+          || page.checkpoint?.item_count !== checkpoint.item_count
+          || page.window.next_cursor === cursor) throw new Error("oaep_history_checkpoint_mismatch");
+        const checkpointItems = new Map(this.checkpointItems);
+        for (const item of page.items) {
+          const previous = checkpointItems.get(item.id);
+          if (previous && oaepProjectionDigest([previous]) !== oaepProjectionDigest([item])) {
+            throw new Error("oaep_history_item_conflict");
+          }
+          checkpointItems.set(item.id, item);
+        }
+        if (checkpointItems.size > checkpoint.item_count
+          || (!page.window.has_more && (checkpointItems.size !== checkpoint.item_count
+            || oaepProjectionDigest([...checkpointItems.values()]) !== checkpoint.snapshot_hash))) {
+          throw new Error("oaep_history_checkpoint_digest_mismatch");
+        }
+        // Stage all rebases before committing: a malformed page must not partially
+        // mutate the live maps. Event sequence, never Item.sequence, is revision.
+        const additions = new Map<string, OaepItem>();
+        for (const item of page.items) {
+          if (!this.items.has(item.id)
+            || (this.itemWaterlines.get(item.id) ?? 0) < checkpoint.sequence) {
+            additions.set(item.id, item);
+            for (const event of this.pendingDeltas.get(item.id)?.events ?? []) {
+              if (event.sequence > checkpoint.sequence) appendDelta(additions, new Map(), event);
+            }
+          }
+        }
+        for (const [id, item] of additions) {
+          this.items.set(id, item);
+          this.itemWaterlines.set(id, Math.max(checkpoint.sequence, this.itemWaterlines.get(id) ?? 0));
+          this.deltaShadows.delete(id);
+          this.clearPendingDeltas(id);
+        }
+        this.checkpointItems = page.window.has_more ? checkpointItems : new Map();
+        for (const run of page.runs) if (!this.runs.has(run.id)) {
+          this.runs.set(run.id, run);
+          // Runs in earlier pages are read at response time, not checkpoint time.
+          // The next journal Run event must supersede this provisional value,
+          // even if that value already advertises its eventual terminal status.
+          this.pagedRunIds.add(run.id);
+        }
+        this.historyCursor = page.window.next_cursor;
+        // Full merged view, not the page alone, so active SessionViewStores rebuild
+        // their Run indices/counts and subsequent patches include the new history.
+        const snapshot = copyProjection(this.state);
+        for (const listener of [...this.listeners]) {
+          await this.dispatch(listener, () => this.deliverSnapshot(listener, snapshot, "resnapshot"), false);
+        }
+      });
+      await Promise.all([...this.listenerQueues.values()].map((queue) => Promise.race([queue.tail, queue.removed])));
+    })().finally(() => { if (this.historyRequest?.promise === promise) this.historyRequest = undefined; });
+    this.historyRequest = { cursor, promise };
+    return promise;
+  }
+
+  private clearPendingDeltas(id: string): void {
+    const pending = this.pendingDeltas.get(id);
+    if (!pending) return;
+    this.pendingDeltaCount -= pending.events.length;
+    this.pendingDeltaBytes -= pending.bytes;
+    this.pendingDeltas.delete(id);
+  }
+
+  private accept(event: OaepEvent, source: "replay" | "stream"): Promise<void> {
+    return this.publish(() => this.acceptPublished(event, source));
+  }
+
+  private async acceptPublished(event: OaepEvent, source: "replay" | "stream"): Promise<void> {
+    this.abort.signal.throwIfAborted();
+    if (this.resnapshotRequested) throw new OaepResnapshotRequired();
     assertOaepEventIntegrity(event, this.sessionId);
     if (event.session_id !== this.sessionId) throw new Error("Cross-Session OAEP Event rejected.");
     if (event.sequence <= this.cursor) return;
     if (event.sequence !== this.cursor + 1) throw new OaepEventGap();
+    const eventBytes = Buffer.byteLength(JSON.stringify(event), "utf8");
+    if (eventBytes > MAX_OAEP_LISTENER_BYTES) throw new Error("oaep_listener_event_too_large");
+    const missingDelta = event.type === "event.item.delta" && event.item_id && !this.items.has(event.item_id);
+    const pendingBytes = missingDelta ? eventBytes : 0;
+    if (missingDelta && (this.pendingDeltaCount >= MAX_PENDING_OAEP_DELTAS
+      || this.pendingDeltaBytes + pendingBytes > MAX_PENDING_OAEP_DELTA_BYTES)) {
+      // Do not advance the cursor or drop this Event: stop this stream and
+      // recover from a canonical checkpoint, replaying everything after it.
+      throw new OaepResnapshotRequired();
+    }
+    const incomingRun = event.data.run as OaepRun | undefined;
+    if (incomingRun?.id && this.pagedRunIds.delete(incomingRun.id)) this.runs.delete(incomingRun.id);
     reduceOaepEvent(this.items, this.runs, event, this.deltaShadows);
+    if (event.item_id) {
+      this.itemWaterlines.set(event.item_id, event.sequence);
+      if (missingDelta) {
+        const pending = this.pendingDeltas.get(event.item_id) ?? { events: [], bytes: 0 };
+        pending.events.push(event);
+        pending.bytes += pendingBytes;
+        this.pendingDeltaCount += 1;
+        this.pendingDeltaBytes += pendingBytes;
+        this.pendingDeltas.set(event.item_id, pending);
+      } else {
+        this.clearPendingDeltas(event.item_id);
+      }
+    }
     this.cursor = event.sequence;
     if (source === "replay") {
       this.metrics.replayEvents += 1;
@@ -679,12 +1008,12 @@ class SharedOaepSessionController {
       // Event can make the owner stop synchronously, so a page-level callback
       // after delivery is too late and loses the observable restored state.
       if (this.retryAttempt) {
-        this.notifyConnection("connected");
+        await this.notifyConnection("connected");
         this.retryAttempt = 0;
       }
     }
     else this.metrics.streamEvents += 1;
-    this.notifyEvent(event, source);
+    await this.notifyEvent(event, source, eventBytes);
   }
 
   private async run(): Promise<void> {
@@ -695,50 +1024,69 @@ class SharedOaepSessionController {
       try {
         if (needsSnapshot) {
           const isResnapshot = this.metrics.snapshots > 0;
-          this.transition(isResnapshot ? "resnapshot" : "snapshot");
-          this.replaceSnapshot(await this.client.getOaepSnapshot(this.sessionId));
-          this.notifySnapshot(isResnapshot ? "resnapshot" : "snapshot");
+          await this.transition(isResnapshot ? "resnapshot" : "snapshot");
+          const snapshot = await this.client.getOaepSnapshot(this.sessionId, { signal: this.abort.signal });
+          await this.publish(async () => {
+            this.abort.signal.throwIfAborted();
+            this.replaceSnapshot(snapshot);
+            await this.notifySnapshot(isResnapshot ? "resnapshot" : "snapshot");
+          });
           needsSnapshot = false;
+          this.resnapshotRequested = false;
         }
-        this.transition("replay");
+        if (this.resnapshotRequested) throw new OaepResnapshotRequired();
+        await this.transition("replay");
         while (true) {
           const fromSequence = this.cursor;
           const page = await this.client.listOaepEvents(this.sessionId, this.cursor);
+          if (this.resnapshotRequested) throw new OaepResnapshotRequired();
           for (const event of page.data) await this.accept(event, "replay");
-          this.notifyReplayPage(page.data.length, fromSequence, this.cursor, page.has_more);
+          await this.notifyReplayPage(page.data.length, fromSequence, this.cursor, page.has_more);
           if (!page.has_more) break;
         }
         if (!firstReady) { firstReady = true; this.markReady(); }
         // Replay itself is an authoritative Runtime connection. A terminal
         // may arrive during replay and synchronously stop this subscription,
         // so publish restoration before attempting the next long-lived SSE.
-        const opened = await this.client.openOaepEventStream(this.sessionId, this.cursor, this.abort.signal);
-        this.transition("connected");
-        if (this.retryAttempt) this.notifyConnection("connected");
-        // A TCP handshake followed by an immediate close is not a recovered
-        // subscription. Only reset the consecutive-recovery budget after the
-        // stream has remained healthy for a short interval; this prevents a
-        // connect/close loop from keeping a Run in `running` forever.
-        const stableConnection = setTimeout(() => {
-          this.retryAttempt = 0;
-          retryStartedAt = 0;
-          this.generationRebinds = 0;
-        }, Math.min(5_000, Math.max(250, Math.floor(OAEP_NETWORK_RECOVERY_WINDOW_MS / 2))));
+        if (this.resnapshotRequested) throw new OaepResnapshotRequired();
+        const streamAbort = new AbortController();
+        this.activeStreamAbort = streamAbort;
+        const abortStream = () => streamAbort.abort(this.abort.signal.reason);
+        this.abort.signal.addEventListener("abort", abortStream, { once: true });
+        if (this.abort.signal.aborted) abortStream();
         try {
-          await consumeSse(opened.events, this.abort.signal, (event) => this.accept(event, "stream"));
+          const opened = await this.client.openOaepEventStream(this.sessionId, this.cursor, streamAbort.signal);
+          await this.transition("connected");
+          if (this.retryAttempt) await this.notifyConnection("connected");
+          // A TCP handshake followed by an immediate close is not a recovered
+          // subscription. Only reset the consecutive-recovery budget after the
+          // stream has remained healthy for a short interval; this prevents a
+          // connect/close loop from keeping a Run in `running` forever.
+          const stableConnection = setTimeout(() => {
+            this.retryAttempt = 0;
+            retryStartedAt = 0;
+            this.generationRebinds = 0;
+          }, Math.min(5_000, Math.max(250, Math.floor(OAEP_NETWORK_RECOVERY_WINDOW_MS / 2))));
+          try {
+            await consumeSse(opened.events, streamAbort.signal, (event) => this.accept(event, "stream"));
+          } finally {
+            clearTimeout(stableConnection);
+          }
+          if (this.resnapshotRequested) throw new OaepResnapshotRequired();
+          if (!this.abort.signal.aborted) throw new Error("Runtime OAEP stream ended before cancellation.");
         } finally {
-          clearTimeout(stableConnection);
+          this.abort.signal.removeEventListener("abort", abortStream);
+          if (this.activeStreamAbort === streamAbort) this.activeStreamAbort = undefined;
         }
-        if (!this.abort.signal.aborted) throw new Error("Runtime OAEP stream ended before cancellation.");
       } catch (error) {
         if (this.abort.signal.aborted) break;
         const disposition = classifyOaepStreamError(error);
         if (disposition === "fatal") {
           this.metrics.fatalErrors += 1;
           this.terminalError = error;
-          this.transition("fatal");
+          await this.transition("fatal");
           this.markReadyFailed(error);
-          this.notifyFatal(error);
+          await this.notifyFatal(error);
           break;
         }
         // A shared client whose Runtime generation was invalidated cannot be
@@ -748,8 +1096,8 @@ class SharedOaepSessionController {
         // Re-resolve the client and resume replay from the current cursor.
         if (isRuntimeClientGenerationInvalidated(error) && await this.rebindClient()) {
           this.metrics.reconnects += 1;
-          this.transition("retrying");
-          this.notifyConnection("retrying", error);
+          await this.transition("retrying");
+          await this.notifyConnection("retrying", error);
           continue;
         }
         this.metrics.reconnects += 1;
@@ -760,8 +1108,10 @@ class SharedOaepSessionController {
         // last contiguous cursor so every missing Event is delivered to live
         // listeners in order. A snapshot would advance past those Events and
         // the chat projection could silently lose content or the Run terminal.
-        // Only an explicitly expired cursor requires a canonical resnapshot.
-        needsSnapshot ||= disposition === "cursor_expired";
+        // Expired cursors and a bounded historical rebase buffer require a
+        // canonical resnapshot instead of retaining an incomplete projection.
+        needsSnapshot ||= disposition === "cursor_expired" || error instanceof OaepResnapshotRequired || this.resnapshotRequested;
+        this.resnapshotRequested ||= needsSnapshot;
         this.retryAttempt += 1;
         if (!retryStartedAt) retryStartedAt = Date.now();
         if (
@@ -770,17 +1120,17 @@ class SharedOaepSessionController {
         ) {
           this.metrics.degradedErrors += 1;
           this.terminalError = new OaepSyncDegradedError(error);
-          this.transition("degraded");
+          await this.transition("degraded");
           this.markReadyFailed(this.terminalError);
-          this.notifyConnection("degraded", this.terminalError);
+          await this.notifyConnection("degraded", this.terminalError);
           break;
         }
-        this.transition("retrying");
-        this.notifyConnection("retrying", error);
+        await this.transition("retrying");
+        await this.notifyConnection("retrying", error);
         await waitForRetry(oaepRetryDelayMs(this.retryAttempt), this.abort.signal);
       }
     }
-    if (this.phase !== "fatal" && this.phase !== "degraded" && this.phase !== "closed") this.transition("closed");
+    if (this.phase !== "fatal" && this.phase !== "degraded" && this.phase !== "closed") await this.transition("closed");
     if (!firstReady && !this.terminalError) this.markReady();
   }
 }
@@ -816,13 +1166,19 @@ export function getOaepSessionOwnershipDiagnostics(): Array<{
  * Runtime generation change: the controller re-resolves the transport and
  * resumes from its own cursor instead of retrying a client that is already
  * aborted. Subscriptions without it keep the retry-only behaviour.
+ * `signal` can cancel even initial replay, before the subscription is returned.
+ * Listeners must not await this subscription's ready/done or future events:
+ * those depend on their own queue making progress. Same-controller history
+ * loading and unready resubscription from a callback reject instead of self-waiting.
+ * `done` remains producer completion, not a listener-drain promise.
  */
 export async function subscribeOaepSession(
   client: RuntimeClient,
   sessionId: string,
   listener: OaepSessionListener,
-  options: { resolveClient?: () => Promise<OaepSessionClientLease> } = {},
+  options: { resolveClient?: () => Promise<OaepSessionClientLease>; signal?: AbortSignal } = {},
 ): Promise<OaepSessionSubscription> {
+  options.signal?.throwIfAborted();
   const ownerKey = oaepSessionOwnerKey(client);
   let sessions = controllers.get(ownerKey);
   if (!sessions) { sessions = new Map(); controllers.set(ownerKey, sessions); }
@@ -838,8 +1194,27 @@ export async function subscribeOaepSession(
     }, options.resolveClient);
     sessions.set(sessionId, controller);
   }
+  if (listenerContext.getStore()?.controller === controller && listenerContext.getStore()?.active && controller.phase !== "connected") {
+    throw new Error("oaep_listener_reentrant_subscribe: schedule subscription outside the listener callback");
+  }
   const remove = controller.add(listener);
-  await controller.ready;
+  const cancel = () => remove();
+  options.signal?.addEventListener("abort", cancel, { once: true });
+  let rejectAbort: (() => void) | undefined;
+  try {
+    await Promise.race([controller.ready, new Promise<never>((_, reject) => {
+      rejectAbort = () => reject(options.signal?.reason ?? new Error("oaep_subscription_aborted"));
+      options.signal?.addEventListener("abort", rejectAbort, { once: true });
+      if (options.signal?.aborted) { cancel(); rejectAbort(); }
+    })]);
+    options.signal?.throwIfAborted();
+  } catch (error) {
+    options.signal?.removeEventListener("abort", cancel);
+    remove(); // No subscription handle will be returned to release this listener.
+    throw error;
+  } finally {
+    if (rejectAbort) options.signal?.removeEventListener("abort", rejectAbort);
+  }
   return {
     get cursor() { return controller!.cursor; },
     get state() { return controller!.state; },
@@ -847,6 +1222,7 @@ export async function subscribeOaepSession(
     get terminalError() { return controller!.terminalError; },
     get phase() { return controller!.phase; },
     done: controller.done,
-    stop: remove,
+    loadEarlier: (cursor, signal) => controller!.loadEarlier(cursor, signal),
+    stop: () => { options.signal?.removeEventListener("abort", cancel); remove(); },
   };
 }

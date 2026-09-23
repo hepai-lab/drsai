@@ -64,6 +64,9 @@ export interface VoicePlaybackRequest {
   voiceName: string;
 }
 
+const NATIVE_SYSTEM_FALLBACK_MS = 400;
+const NATIVE_SYSTEM_WATCHDOG_MS = 12_000;
+
 export class VoicePlaybackController {
   private audio: AudioLike | null = null;
   private audioUrl: string | null = null;
@@ -71,8 +74,11 @@ export class VoicePlaybackController {
   private readonly environment: VoicePlaybackEnvironment;
   private generation = 0;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  private nativeFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  private nativeWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
   private requestId: string | null = null;
   private snapshot: VoicePlaybackSnapshot = { activeMessageId: null, error: null, phase: "idle" };
+  private systemSpeakStarted = false;
   private readonly onChange: (snapshot: VoicePlaybackSnapshot) => void;
   private unsubscribe: (() => void) | null = null;
   private utterance: UtteranceLike | null = null;
@@ -94,32 +100,31 @@ export class VoicePlaybackController {
     const generation = ++this.generation;
     this.release(true);
     const normalized = { ...request, rate: Math.min(2, Math.max(0.5, request.rate)) };
-    if (normalized.mode === "provider" && this.environment.provider) {
-      this.update({ activeMessageId: request.messageId, error: null, phase: "synthesizing" });
-      void this.playProvider(generation, normalized);
-    } else if (normalized.mode === "system" && this.environment.provider) {
-      // Electron Chromium speechSynthesis is unreliable on Windows; prefer native SAPI WAV.
-      this.update({ activeMessageId: request.messageId, error: null, phase: "synthesizing" });
-      void this.playProvider(generation, normalized, { runtime: "system" });
-    } else {
-      this.update({ activeMessageId: request.messageId, error: null });
-      this.playSystem(normalized);
+    // Always leave "synthesizing" immediately. WAV/SAPI work continues in the background.
+    this.update({ activeMessageId: request.messageId, error: null, phase: "playing" });
+    if (this.environment.system) {
+      this.playSystem(generation, normalized, { allowNativeFallback: Boolean(this.environment.provider) });
+      return;
+    }
+    if (this.environment.provider) {
+      void this.playProvider(generation, normalized, {
+        runtime: normalized.mode === "provider" ? undefined : "system",
+        preservePhase: true,
+      });
     }
   }
 
   pause(): boolean {
-    if (this.snapshot.phase !== "playing") return false;
     if (this.audio) this.audio.pause();
-    else if (this.utterance && this.environment.system) this.environment.system.pause();
+    else if (this.environment.system) this.environment.system.pause();
     else return false;
     this.update({ phase: "paused" });
     return true;
   }
 
   resume(): boolean {
-    if (this.snapshot.phase !== "paused") return false;
     if (this.audio) void this.audio.play().catch((error: unknown) => this.handleAudioError("en", error));
-    else if (this.utterance && this.environment.system) this.environment.system.resume();
+    else if (this.environment.system) this.environment.system.resume();
     else return false;
     this.update({ phase: "playing" });
     return true;
@@ -132,6 +137,10 @@ export class VoicePlaybackController {
     this.update({ activeMessageId: null, error: null, phase: "idle" });
   }
 
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.generation += 1;
@@ -139,15 +148,24 @@ export class VoicePlaybackController {
     this.disposed = true;
   }
 
-  private playSystem(request: VoicePlaybackRequest): void {
+  private playSystem(
+    generation: number,
+    request: VoicePlaybackRequest,
+    options?: { allowNativeFallback?: boolean },
+  ): void {
     const system = this.environment.system;
     if (!system) {
       this.update({ activeMessageId: request.messageId, error: localize(request.language, "当前系统不支持语音播报。", "System speech playback is unavailable."), phase: "failed" });
       return;
     }
-    // Chromium often leaves speechSynthesis paused after cancel(); clear that before speaking.
-    system.cancel();
-    system.resume();
+    this.systemSpeakStarted = false;
+    this.clearNativeFallback();
+    // release() already cancelled the previous utterance; resume in case Chromium stayed paused.
+    try {
+      system.resume();
+    } catch {
+      // Chromium may throw if the utterance queue is already empty.
+    }
 
     const voices = system.getVoices();
     const utterance = this.environment.createUtterance(request.text);
@@ -155,38 +173,71 @@ export class VoicePlaybackController {
     utterance.rate = request.rate;
     utterance.voice = this.environment.selectVoice(voices, request.language, request.voiceName);
     utterance.onstart = () => {
-      if (this.utterance === utterance) {
-        this.update({ phase: "playing" });
-        this.startSystemKeepalive(system);
-      }
+      if (this.utterance !== utterance || generation !== this.generation) return;
+      this.systemSpeakStarted = true;
+      this.clearNativeFallback();
+      this.update({ phase: "playing" });
+      this.startSystemKeepalive(system);
     };
     utterance.onend = () => {
       if (this.utterance !== utterance) return;
       this.clearSystemKeepalive();
+      if (!this.systemSpeakStarted && options?.allowNativeFallback && this.environment.provider) {
+        this.utterance = null;
+        this.clearNativeFallback();
+        this.update({ activeMessageId: request.messageId, error: null, phase: "playing" });
+        void this.playProvider(generation, request, { runtime: "system", preservePhase: true });
+        return;
+      }
+      this.clearNativeFallback();
       this.utterance = null;
       this.update({ activeMessageId: null, phase: "idle" });
     };
     utterance.onerror = (event) => {
-      if (this.utterance !== utterance) return;
+      if (this.utterance !== utterance || generation !== this.generation) return;
       this.clearSystemKeepalive();
-      this.utterance = null;
       if (event.error === "canceled" || event.error === "interrupted") {
+        if (options?.allowNativeFallback && this.environment.provider && !this.systemSpeakStarted) {
+          this.utterance = null;
+          this.clearNativeFallback();
+          this.update({ activeMessageId: request.messageId, error: null, phase: "playing" });
+          void this.playProvider(generation, request, { runtime: "system", preservePhase: true });
+          return;
+        }
+        this.clearNativeFallback();
+        this.utterance = null;
         this.update({ activeMessageId: null, phase: "idle" });
-      } else {
-        const detail = describeError(event.error, event.message);
-        this.update({ activeMessageId: request.messageId, error: localize(request.language, `系统语音播放失败（${detail}）。`, `Speech playback failed (${detail}).`), phase: "failed" });
+        return;
       }
+      if (options?.allowNativeFallback && this.environment.provider) {
+        void this.playProvider(generation, request, { runtime: "system", preservePhase: true });
+        return;
+      }
+      const detail = describeError(event.error, event.message);
+      this.update({ activeMessageId: request.messageId, error: localize(request.language, `系统语音播放失败（${detail}）。`, `Speech playback failed (${detail}).`), phase: "failed" });
     };
     this.utterance = utterance;
-    this.update({ phase: "playing" });
+    this.update({ activeMessageId: request.messageId, error: null, phase: "playing" });
 
-    // Re-select voice if the first getVoices() returned empty (common on first use).
     if (!utterance.voice) {
       utterance.voice = this.environment.selectVoice(system.getVoices(), request.language, request.voiceName);
+    }
+    if (!utterance.voice && options?.allowNativeFallback && this.environment.provider) {
+      void this.playProvider(generation, request, { runtime: "system", preservePhase: true });
+      return;
     }
     system.speak(utterance);
     // Some Chromium builds queue the utterance but stay paused with no audio.
     system.resume();
+    if (options?.allowNativeFallback && this.environment.provider) {
+      this.nativeFallbackTimer = setTimeout(() => {
+        if (generation !== this.generation || this.systemSpeakStarted) return;
+        this.clearSystemKeepalive();
+        this.environment.system?.cancel();
+        this.utterance = null;
+        void this.playProvider(generation, request, { runtime: "system", preservePhase: true });
+      }, NATIVE_SYSTEM_FALLBACK_MS);
+    }
   }
 
   private startSystemKeepalive(system: NonNullable<VoicePlaybackEnvironment["system"]>): void {
@@ -213,10 +264,24 @@ export class VoicePlaybackController {
     }
   }
 
+  private clearNativeFallback(): void {
+    if (this.nativeFallbackTimer !== null) {
+      clearTimeout(this.nativeFallbackTimer);
+      this.nativeFallbackTimer = null;
+    }
+  }
+
+  private clearNativeWatchdog(): void {
+    if (this.nativeWatchdogTimer !== null) {
+      clearTimeout(this.nativeWatchdogTimer);
+      this.nativeWatchdogTimer = null;
+    }
+  }
+
   private async playProvider(
     generation: number,
     request: VoicePlaybackRequest,
-    options?: { runtime?: "system" },
+    options?: { runtime?: "system"; preservePhase?: boolean },
   ): Promise<void> {
     const provider = this.environment.provider;
     if (!provider) return;
@@ -225,9 +290,18 @@ export class VoicePlaybackController {
     const pendingEvents: DesktopVoiceSynthesisEvent[] = [];
     try {
       if (options?.runtime !== "system") {
-        const status = await provider.getStatus();
+        const status = await Promise.race([
+          provider.getStatus(),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error("voice-provider-status-timeout")), 1_500);
+          }),
+        ]);
         if (!this.isCurrent(generation)) return;
         if (status.state !== "ready" || !status.supportsSynthesisTask) {
+          if (this.environment.system) {
+            this.playSystem(generation, request, { allowNativeFallback: false });
+            return;
+          }
           this.update({
             activeMessageId: request.messageId,
             error: status.message || localize(
@@ -254,9 +328,10 @@ export class VoicePlaybackController {
         }
         if (event.requestId !== boundRequestId) return;
         if (event.type === "progress") {
-          this.update({ phase: "synthesizing" });
+          if (!options?.preservePhase) this.update({ phase: "synthesizing" });
         } else if (event.type === "completed") {
           terminal = true;
+          this.clearNativeWatchdog();
           this.requestId = null;
           this.unsubscribe?.();
           this.unsubscribe = null;
@@ -287,6 +362,7 @@ export class VoicePlaybackController {
           void audio.play().catch((error: unknown) => this.handleAudioError(request.language, error));
         } else if (event.type === "failed" || event.type === "cancelled") {
           terminal = true;
+          this.clearNativeWatchdog();
           this.release(false);
           if (event.type === "cancelled") {
             this.update({ activeMessageId: null, phase: "idle" });
@@ -313,13 +389,22 @@ export class VoicePlaybackController {
       }
       boundRequestId = started.requestId;
       this.requestId = started.requestId;
-      if (!terminal) this.update({ phase: "synthesizing" });
+      if (!terminal && !options?.preservePhase) this.update({ phase: "synthesizing" });
       for (const event of pendingEvents.splice(0)) handleEvent(event);
+      if (options?.runtime === "system" && this.environment.system && !terminal) {
+        this.clearNativeWatchdog();
+        this.nativeWatchdogTimer = setTimeout(() => {
+          if (!this.isCurrent(generation) || terminal || this.audio) return;
+          void provider.cancel(boundRequestId || started.requestId);
+          this.release(false);
+          this.playSystem(generation, request, { allowNativeFallback: false });
+        }, NATIVE_SYSTEM_WATCHDOG_MS);
+      }
     } catch (error) {
       if (!this.isCurrent(generation)) return;
-      // Fall back to in-renderer speechSynthesis if native system TTS fails.
-      if (options?.runtime === "system" && this.environment.system) {
-        this.playSystem(request);
+      if (options?.preservePhase) return;
+      if (this.environment.system) {
+        this.playSystem(generation, request, { allowNativeFallback: options?.runtime !== "system" });
         return;
       }
       this.release(false);
@@ -345,6 +430,9 @@ export class VoicePlaybackController {
 
   private release(cancelRemote: boolean): void {
     this.clearSystemKeepalive();
+    this.clearNativeFallback();
+    this.clearNativeWatchdog();
+    this.systemSpeakStarted = false;
     this.environment.system?.cancel();
     this.utterance = null;
     if (this.audio) {

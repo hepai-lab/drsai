@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import { hydrationRequestCovers as covers } from "../renderer/src/hydrationRequestPolicy";
+assert.equal(covers({}, {}), true);
+assert.equal(covers({}, { forceFresh: true }), false);
+assert.equal(covers({ forceFresh: true }, {}), true);
+assert.equal(covers({ minimumSequence: 10 }, { minimumSequence: 11 }), false);
+assert.equal(covers({ minimumSequence: 11 }, { minimumSequence: 10 }), true);
+assert.equal(covers({}, { minimumSequence: 0 }), false);
+assert.equal(covers({ expectedGeneration: 1 }, { expectedGeneration: 2 }), false);
+assert.equal(covers({ expectedGeneration: 2 }, { expectedGeneration: 1 }), true);
+assert.equal(covers({ historyCursor: "a" }, { historyCursor: "b" }), false);
+assert.equal(covers({ historyCursor: "a" }, { oaepHistoryCursor: "a" }), false);
+assert.equal(covers({ oaepHistoryCursor: "a", forceFresh: true }, { oaepHistoryCursor: "a", forceFresh: true }), true);
+assert.equal(covers({ oaepHistoryCursor: "a" }, {}), false);
+console.log("HYDRATION_REQUEST_POLICY_OK");

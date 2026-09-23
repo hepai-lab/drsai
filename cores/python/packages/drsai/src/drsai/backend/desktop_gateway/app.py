@@ -243,7 +243,28 @@ async def lifespan(app: FastAPI):
 
     selftest_task = asyncio.create_task(_run_subprocess_selftest())
 
+    # At startup the gateway is running no turns, so any thread still marked
+    # ACTIVE in the shared drsai.db is a residue from the previous process
+    # (crash, force-kill, or a turn abandoned by an old lock bug). Reset them
+    # so no session view claims a turn is still running.
+    try:
+        await asyncio.to_thread(_state.agent_manager().reset_stale_active_threads)
+        logger.info("Startup: residual active thread statuses reset")
+    except Exception as exc:
+        logger.warning("Startup: residual active thread reset skipped: %s", type(exc).__name__)
+
+    # Cancel detached runs whose session has no live SSE subscriber anymore
+    # (desktop closed / renderer crashed mid-turn). Bounded by the grace env.
+    from .routes import runs as _runs_routes
+
+    orphan_reaper_task = _runs_routes.start_orphan_reaper()
+
     yield
+    orphan_reaper_task.cancel()
+    try:
+        await orphan_reaper_task
+    except asyncio.CancelledError:
+        pass
     selftest_task.cancel()
     try:
         await selftest_task
@@ -259,6 +280,7 @@ async def lifespan(app: FastAPI):
     for backend in service.backends.values():
         await backend.close()
     await _state.agent_manager().close()
+    await asyncio.to_thread(_state.runtime_engine().close)
 
 
 def create_app() -> FastAPI:

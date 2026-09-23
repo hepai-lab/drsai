@@ -46,6 +46,12 @@ import {
 } from "./windowState";
 import { cancelInstall, startInstall } from "./install";
 import {
+  clearUnreadTrayBadge,
+  createSystemTray,
+  destroySystemTray,
+  incrementUnreadTrayBadge,
+} from "./tray";
+import {
   getGatewayStatus,
   getGatewayStartupMode,
   shutdownGateway,
@@ -171,6 +177,7 @@ import {
   subscribeUpdateStatus,
 } from "./updates";
 import { cancelChatTurn, disposeAllChatForTarget, handleChatRenderHealthReport, hasActiveChats, quarantineChatDispatcher, recoverChatRun, releaseChatQuarantine, respondChatInput, startChat } from "./chat";
+import { configureChatThreadCompletion } from "../../../shared/main/chatThreadCompletion";
 import { trySendToRenderer } from "../../../shared/main/rendererIpcTarget";
 import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
@@ -199,9 +206,9 @@ import {
   getWorktreeMigrationDiagnostics,
   prepareForkWorktree,
 } from "./forkWorktrees";
-import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, // V2: trimmed �� diagnoseMyDrSaiModelConnection, saveMyDrSaiModelProvider, testMyDrSaiModelProvider
-  discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, // V2: trimmed �� saveMyDrSaiModelProvider,
-  savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, // V2: trimmed �� testMyDrSaiModelProvider,
+import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModel, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection,
+  discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelDeletion, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider,
+  savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider,
   testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
 import { getWebSearchProviderPolicy, updateWebSearchProviderPolicy } from "../../../shared/main/myDrSaiConfig";
 import { checkKnowledgeBaseStale, discoverRagflowDatasets, listKnowledgeBaseFiles, rediscoverRagflowDatasets, refreshKnowledgeBaseIfStale } from "../../../shared/main/myDrSaiConfig";
@@ -288,7 +295,7 @@ import {
   snapshotWaterlineFor,
   subscribeRuntimeThreadSnapshot,
 } from "../../../shared/main/threadRuntimeSubscription";
-import type { DesktopThreadSnapshotEnvelope } from "../../../shared/api/desktopApi";
+import type { DesktopThreadSnapshot, DesktopThreadSnapshotEnvelope } from "../../../shared/api/desktopApi";
 import {
   coalesceHydrationEnvelope,
   persistedThreadSnapshotEnvelope,
@@ -562,6 +569,7 @@ import type {
 } from "../shared/browser/types";
 import type {
   CompletionNotificationPreference,
+  CompletionNotificationTarget,
   DesktopApprovalProposalRequest,
   DesktopApprovalProposalResult,
   DesktopA5ServiceGuidanceScenario,
@@ -658,7 +666,7 @@ import type {
   InteractiveDebugStartRequest,
   UpdateMyDrSaiConfigRequest,
   UpdateMyDrSaiModelConnectionRequest,
-  // V2: trimmed �� SaveMyDrSaiModelProviderRequest,
+  SaveMyDrSaiModelProviderRequest,
 } from "../shared/desktopApi";
 import {
   evaluateExecutionPermission,
@@ -674,6 +682,8 @@ import { applyAnomalyDecision as applySharedAnomalyDecision } from "../../../sha
 import {
   configureCompletionNotifications,
   notifyBackgroundTaskCompleted,
+  notifyConversationCompleted,
+  getCompletionNotificationPreference,
   restoreCompletionNotificationPreference,
   setCompletionNotificationPreference,
 } from "./completionNotifications";
@@ -691,6 +701,14 @@ const runtimeThreadSubscriptions = new Map<string, { stop(): void }>();
 const threadSnapshotHydrations = new Map<string, AbortController>();
 const runtimeThreadCatalogTimers = new Map<number, NodeJS.Timeout>();
 const runtimeThreadCatalogBusy = new Set<number>();
+// Fast cadence while a backgrounded conversation is running; back off once the
+// catalog has been quiet for a few consecutive polls.
+const RUNNING_POLL_INTERVAL_MS = 15_000;
+const IDLE_POLL_INTERVAL_MS = 60_000;
+const IDLE_POLLS_BEFORE_BACKOFF = 2;
+// Startup reconciliation batches through the persisted catalog on one shared
+// poller before any renderer subscribes to a thread snapshot.
+const BOOTSTRAP_WEB_CONTENTS_ID = -1;
 const runtimeThreadCleanupRegistered = new Set<number>();
 const runtimeWorkspaceCatalogSubscriptions = new Map<string, AbortController>();
 
@@ -851,7 +869,7 @@ function stopRuntimeThreadSubscriptions(webContentsId?: number): void {
       }
     }
     const timer = runtimeThreadCatalogTimers.get(webContentsId);
-    if (timer) clearInterval(timer);
+    if (timer) clearTimeout(timer);
     runtimeThreadCatalogTimers.delete(webContentsId);
     runtimeThreadCatalogBusy.delete(webContentsId);
   }
@@ -866,52 +884,225 @@ function ensureRuntimeThreadCleanup(webContents: WebContents): void {
   });
 }
 
+/**
+ * Terminal status implied by a Runtime conversation snapshot. A snapshot is
+ * authoritative about whether its tail turn is still live: a pending
+ * structured turn or a streaming message means the run is still active,
+ * otherwise it has settled. Mirrors the renderer's `deriveThreadCatalogStatus`
+ * so the periodic reconciliation cannot leave a finished Session "running".
+ */
+function runtimeSnapshotCatalogStatus(
+  snapshot: DesktopThreadSnapshot,
+): "idle" | "error" | "running" {
+  for (let index = snapshot.messages.length - 1; index >= 0; index -= 1) {
+    const message = snapshot.messages[index];
+    if (!message) continue;
+    const turn = message.structuredTurn;
+    const pending = turn
+      ? turn.status === "pending" || turn.status === "running"
+      : Boolean(message.streaming);
+    if (pending) return "running";
+    const failed = Boolean(message.error || message.replyFailed)
+      || turn?.status === "error"
+      || Boolean(turn && turn.parts.some((part) => part.kind === "notice" && part.level === "error"));
+    return failed ? "error" : "idle";
+  }
+  return "idle";
+}
+
+/**
+ * Poll the persisted catalog for running threads and reconcile any that
+ * reached a terminal Runtime snapshot. Returns true when at least one
+ * non-active thread is still running, which drives the adaptive poll interval.
+ */
 async function syncRuntimeThreadCatalog(
-  webContents: WebContents,
+  webContents: WebContents | null,
   activeThreadId: string,
-): Promise<void> {
-  if (webContents.isDestroyed() || runtimeThreadCatalogBusy.has(webContents.id)) return;
-  runtimeThreadCatalogBusy.add(webContents.id);
+): Promise<boolean> {
+  const webContentsId = webContents && !webContents.isDestroyed() ? webContents.id : null;
+  // A destroyed renderer (or the bootstrap pass, which has none) still
+  // reconciles the persisted catalog; only its broadcasts are skipped.
+  const ownerId = webContentsId ?? BOOTSTRAP_WEB_CONTENTS_ID;
+  if (runtimeThreadCatalogBusy.has(ownerId)) return false;
+  runtimeThreadCatalogBusy.add(ownerId);
   try {
-    // The active thread already owns a live OAEP subscription. Historical idle
-    // threads must not trigger full history sync + capability probes every poll;
-    // only a genuinely running background task needs catalog reconciliation.
-    for (const thread of (await listThreads()).filter((item) =>
+    // The active thread normally owns a live OAEP subscription, so only a
+    // genuinely running background task needs catalog reconciliation. It is
+    // still polled for *terminal* snapshots: a turn whose terminal event never
+    // reached the renderer (a stale in-memory turn record echoing `start`
+    // after the run finished, a recovered subscription that settled silently)
+    // would otherwise pin the visible Session on "running" forever. Its
+    // progress-only updates stay exclusive to the live subscription.
+    const candidates = (await listThreads()).filter((item) =>
       item.runtimeSessionId
       && !item.archived
       && item.status === "running"
-      && item.id !== activeThreadId
-    )) {
+      && (item.id !== activeThreadId
+        || webContentsId === null
+        || !runtimeThreadSubscriptions.has(`${webContentsId}:${item.id}`))
+    );
+    let activeThreadTerminal: {
+      thread: DesktopThread;
+      status: "idle" | "error";
+    } | null = null;
+    for (const thread of candidates) {
       const snapshot = await getRuntimeThreadSnapshot(thread).catch(() => null);
-      if (!snapshot || snapshot.updatedAt <= Date.parse(thread.updatedAt)) continue;
+      if (!snapshot) continue;
+      const settledStatus = runtimeSnapshotCatalogStatus(snapshot);
+      const hasTerminalSnapshot = settledStatus !== "running";
+      // A still-active Runtime turn only reconciles its progress. A terminal
+      // snapshot must clear the catalog status even when the Runtime snapshot
+      // timestamp did not advance past the persisted one, otherwise a run that
+      // finished while this conversation was backgrounded stays "running".
+      if (!hasTerminalSnapshot && snapshot.updatedAt <= Date.parse(thread.updatedAt)) continue;
       const updated = await updateThread({
         id: thread.id,
         messageCount: snapshot.messageCount,
         unread: thread.id !== activeThreadId,
+        ...(hasTerminalSnapshot ? { status: settledStatus } : {}),
       });
-      if (!webContents.isDestroyed()) {
+      if (webContentsId !== null && webContents) {
         safeWebContentsSend(webContents, "desktop:thread-catalog", {
           thread: updated,
           source: "runtime-session",
+          // Only a terminal Runtime snapshot authorizes the renderer to settle
+          // a cached snapshot it could not observe finishing.
+          ...(hasTerminalSnapshot ? { settled: true } : {}),
+        });
+      }
+      if (thread.id === activeThreadId && hasTerminalSnapshot) {
+        activeThreadTerminal = { thread: updated, status: settledStatus };
+      }
+    }
+    if (activeThreadTerminal && webContentsId !== null && webContents) {
+      // The composer only listens to chat events, so surface this through the
+      // recoverChatRun channel the adapter already treats as authoritative
+      // "this turn is over" evidence. `run_inactive` is terminal bookkeeping,
+      // not a user-visible failure: the adapter settles the turn without
+      // raising a "Reply failed" bubble.
+      const requestId = activeThreadTerminal.thread.lastRequestId ?? null;
+      if (requestId) {
+        safeWebContentsSend(webContents, "desktop:chat-event", {
+          requestId,
+          sessionId: activeThreadTerminal.thread.id,
+          type: "error",
+          error: "run_inactive",
+          errorEnvelope: {
+            code: "run_inactive",
+            category: "runtime",
+            message: "The persisted Runtime snapshot shows this turn already finished.",
+            retryable: false,
+            recovery_actions: [],
+          },
         });
       }
     }
+    return candidates.some((thread) => thread.id !== activeThreadId);
   } finally {
-    runtimeThreadCatalogBusy.delete(webContents.id);
+    runtimeThreadCatalogBusy.delete(ownerId);
   }
 }
 
+/**
+ * Reconcile persisted "running" threads left behind by a previous session
+ * before any renderer polls. A thread whose turn ended while the Desktop was
+ * closed (or whose terminal bookkeeping was lost) would otherwise keep the
+ * sidebar spinner until the user happened to open it; this settles it from
+ * the persisted Runtime snapshot once, at startup, without blocking boot.
+ */
+function startBootstrapRuntimeThreadCatalogSync(): void {
+  if (runtimeThreadCatalogBusy.has(BOOTSTRAP_WEB_CONTENTS_ID)) return;
+  void syncRuntimeThreadCatalog(null, "").catch(() => false);
+}
+
+
 function startRuntimeThreadCatalogSync(webContents: WebContents, activeThreadId: string): void {
   const current = runtimeThreadCatalogTimers.get(webContents.id);
-  if (current) clearInterval(current);
-  void syncRuntimeThreadCatalog(webContents, activeThreadId);
-  const timer = setInterval(
-    () => void syncRuntimeThreadCatalog(webContents, activeThreadId),
-    15_000,
-  );
-  timer.unref();
-  runtimeThreadCatalogTimers.set(webContents.id, timer);
+  if (current) clearTimeout(current);
+  // Adaptive polling: scan quickly while a backgrounded conversation is still
+  // running, and back off once the catalog has been quiet for a while. A fresh
+  // running thread snaps the interval back to the fast cadence.
+  let idlePolls = 0;
+  const schedule = (delayMs: number): void => {
+    if (webContents.isDestroyed()) return;
+    const timer = setTimeout(() => {
+      runtimeThreadCatalogTimers.delete(webContents.id);
+      void tick();
+    }, delayMs);
+    timer.unref();
+    runtimeThreadCatalogTimers.set(webContents.id, timer);
+  };
+  const tick = async (): Promise<void> => {
+    const hasRunning = await syncRuntimeThreadCatalog(webContents, activeThreadId).catch(() => false);
+    idlePolls = hasRunning ? 0 : idlePolls + 1;
+    schedule(hasRunning || idlePolls < IDLE_POLLS_BEFORE_BACKOFF ? RUNNING_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS);
+  };
+  void tick();
 }
+
+/**
+ * A chat turn that finishes while the user reads another conversation must
+ * still reach the sidebar. The send pipeline only persists the Thread to disk,
+ * and the renderer stops applying chat events for a non-active thread, so
+ * without this broadcast the row keeps its stale "running" spinner. The
+ * renderer keeps a live Runtime subscription only for the conversation on
+ * screen; that subscription is therefore how the main process tells whether
+ * the finished conversation is still the active one.
+ */
+// Backgrounded completions waiting for the user to return. Clicking the tray
+// badge navigates to the most recent one, mirroring a notification click.
+const pendingUnreadCompletions: CompletionNotificationTarget[] = [];
+
+configureChatThreadCompletion({
+  publish: (completion, target) => {
+    const webContents = target as unknown as WebContents;
+    const isActiveThread = runtimeThreadSubscriptions.has(
+      `${webContents.id}:${completion.threadId}`,
+    );
+    void (async () => {
+      const storedThread = (await listThreads()).find((item) => item.id === completion.threadId);
+      // A completed background conversation remains unread until selected in
+      // the sidebar. Persist this with the terminal catalog row so the badge
+      // survives a renderer reload or application restart.
+      const thread = storedThread && !isActiveThread && !completion.cancelled
+        ? await updateThread({ id: storedThread.id, unread: true })
+        : storedThread;
+      if (thread && !webContents.isDestroyed()) {
+        safeWebContentsSend(webContents, "desktop:thread-catalog", {
+          thread,
+          source: "runtime-session",
+          // The turn is definitively terminal: the renderer may settle a cached
+          // snapshot for this conversation even though it is not on screen.
+          settled: true,
+        });
+      }
+      // The renderer raises its own notification for the conversation on
+      // screen; only a backgrounded turn needs one from the main process.
+      if (isActiveThread || completion.cancelled) return;
+      notifyConversationCompleted({
+        threadId: completion.threadId,
+        title: thread?.title,
+        workspacePath: thread?.workspacePath,
+        failed: completion.failed,
+        prompt: completion.prompt,
+      });
+      // Count the completion as unread until the user returns to the window
+      // (tray click / notification click / window focus all clear the badge).
+      if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isFocused()) {
+        pendingUnreadCompletions.push({
+          kind: "chat_run",
+          targetId: completion.threadId,
+          threadId: completion.threadId,
+          ...(thread?.workspacePath ? { workspacePath: thread.workspacePath } : {}),
+        });
+        if (pendingUnreadCompletions.length > 100) pendingUnreadCompletions.splice(0, pendingUnreadCompletions.length - 100);
+        incrementUnreadTrayBadge(mainWindow);
+      }
+    })().catch(() => {
+      // A completion broadcast must never fail the run pipeline.
+    });
+  },
+});
 configureChannelProviderAuth({ credentials: WINDOWS_CREDENTIAL_SERVICE });
 
 const interactiveDebugPolicy = new InteractiveDebugPolicyStore(join(DRSAI_HOME, "desktop", "interactive-debug-policy.json"));
@@ -940,6 +1131,10 @@ interface ManagerPresentationRun {
 const managerPresentationRuns = new Map<string, ManagerPresentationRun>();
 let managerPresentationAttempt = 0;
 let appQuitRequested = false;
+// Guards desktop:restart-application against a second invocation while the
+// teardown is still running. Kept separate from appQuitRequested so the window
+// close handler keeps its "hide to tray while work continues" behaviour.
+let restartInFlight = false;
 
 function sanitizeManagerPresentationRequirements(values: string[] | undefined): string[] {
   if (!Array.isArray(values)) return [];
@@ -3132,12 +3327,9 @@ function createWindow(): void {
     minHeight: effectiveMinHeight,
     title: "OpenDrSai",
     titleBarStyle: "hidden",
-    titleBarOverlay: {
-      color: "#fafafe",
-      symbolColor: "#5f5870",
-      height: 40,
-    },
-    backgroundColor: "#fafafe",
+    // Caption buttons are custom HTML so hover wash is clearly visible.
+    // Icons mimic native Windows glyphs (line / square / x), not Lucide.
+    backgroundColor: "#f2f3f4",
     show: false,
     ...(windowIcon ? { icon: windowIcon } : {}),
     webPreferences: {
@@ -3173,10 +3365,20 @@ function createWindow(): void {
     if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
     windowStateSaveTimer = setTimeout(persistWindowState, 250);
   };
+  const notifyWindowMaximizedChanged = () => {
+    if (createdWindow.isDestroyed()) return;
+    safeWebContentsSend(createdWindow.webContents, "desktop:window-maximized-changed", createdWindow.isMaximized());
+  };
   createdWindow.on("move", scheduleWindowStateSave);
   createdWindow.on("resize", scheduleWindowStateSave);
-  createdWindow.on("maximize", scheduleWindowStateSave);
-  createdWindow.on("unmaximize", scheduleWindowStateSave);
+  createdWindow.on("maximize", () => {
+    scheduleWindowStateSave();
+    notifyWindowMaximizedChanged();
+  });
+  createdWindow.on("unmaximize", () => {
+    scheduleWindowStateSave();
+    notifyWindowMaximizedChanged();
+  });
   createdWindow.on("enter-full-screen", scheduleWindowStateSave);
   createdWindow.on("leave-full-screen", scheduleWindowStateSave);
   createdWindow.on("closed", () => {
@@ -3189,10 +3391,20 @@ function createWindow(): void {
     console.info(
       `[desktop] Window close requested (quit=${appQuitRequested}, presentations=${managerPresentationRuns.size}, chats=${hasActiveChats()}, agents=${hasActiveAgentRuns()}).`,
     );
-    if (appQuitRequested || !hasActiveForegroundIndependentWork()) return;
+    // Closing the window only minimizes it to the system tray; the tray
+    // context menu's "Quit" entry (or the OS-level quit) is the way out.
+    if (appQuitRequested || restartInFlight) return;
     event.preventDefault();
-    mainWindow?.hide();
-    console.info("[desktop] Window hidden while active work continues in the background.");
+    createdWindow.hide();
+    if (hasActiveForegroundIndependentWork()) {
+      console.info("[desktop] Window hidden to tray while active work continues in the background.");
+    } else {
+      console.info("[desktop] Window hidden to tray; use the tray menu to quit.");
+    }
+  });
+
+  createdWindow.on("focus", () => {
+    clearUnreadTrayBadge(createdWindow);
   });
 
   createdWindow.once("ready-to-show", () => {
@@ -3564,6 +3776,10 @@ function focusMainWindow(): void {
   }
   mainWindow.show();
   mainWindow.focus();
+  // Clicking a notification, the tray icon or a deep link means the user is
+  // back: the unread counter and the taskbar flash are no longer needed.
+  clearUnreadTrayBadge(mainWindow);
+  pendingUnreadCompletions.length = 0;
 }
 
 function registerBrowserWebContentsPolicy(): void {
@@ -4882,12 +5098,54 @@ function registerIpc(): void {
     return logout(options);
   });
   secureHandle("desktop:restart-application", () => {
-    setTimeout(() => {
-      app.relaunch();
-      // Bypass the normal quit handler so an externally managed development
-      // Gateway remains available while Electron replaces itself.
-      app.exit(0);
-    }, 100).unref();
+    // Restart must run the same teardown boundary as a normal quit. The previous
+    // implementation called app.exit(0) after a fixed 100 ms, which destroyed
+    // every WebContents while the 15 s thread-catalog poll, the workspace
+    // catalog stream loop and the pending Gateway shutdown were still in flight.
+    // Those callbacks then touched destroyed WebContents and Electron surfaced
+    // the race as an "Object has been destroyed" main-process error dialog even
+    // though the restart itself succeeded.
+    if (restartInFlight) return true;
+    restartInFlight = true;
+
+    // Stop the repeating / queryable work that would otherwise fire during
+    // teardown. stopRuntimeThreadSubscriptions() with no argument aborts the
+    // OAEP subscriptions and the workspace catalog stream loops as well.
+    for (const timer of runtimeThreadCatalogTimers.values()) clearTimeout(timer);
+    runtimeThreadCatalogTimers.clear();
+    runtimeThreadCatalogBusy.clear();
+    runtimeThreadCleanupRegistered.clear();
+    stopRuntimeThreadSubscriptions();
+
+    disposeAllDuplexVoiceSessions();
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      cancelVoiceTranscriptionsForSender(mainWindow.webContents);
+      cancelVoiceSynthesisForSender(mainWindow.webContents);
+    }
+    stopScheduledTaskWorker();
+    browserTaskService.shutdown();
+    killAllTerminalSessions();
+    stopAllRemoteWorkspaces();
+
+    // shutdownGateway(true) keeps the managed / adopted Runtime alive so the
+    // relaunched process adopts it instead of cold-starting a new Gateway.
+    // Never call stopGateway() here: in source development it would kill the
+    // dev.ps1 watcher child and create a permanent restart loop.
+    const cleanup = Promise.race([
+      closeMobilePairingControllers().then(() => shutdownGateway(true)),
+      new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
+    ]);
+
+    void cleanup
+      .catch((error) => {
+        console.error("[desktop] Failed to stop gateway during restart:", error);
+      })
+      .finally(() => {
+        // Bypass the normal quit handler so an externally managed development
+        // Gateway remains available while Electron replaces itself.
+        app.relaunch();
+        app.exit(0);
+      });
     return true;
   });
   secureHandle("desktop:refresh-auth-session", () => refreshAuthSession());
@@ -4906,6 +5164,47 @@ function registerIpc(): void {
       retryCount: 0,
     });
     return health;
+  });
+  secureHandle("desktop:window-chrome-appearance", (event, chrome: {
+    color?: string;
+    symbolColor?: string;
+    backgroundColor?: string;
+  }) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    const backgroundColor = typeof chrome?.backgroundColor === "string" && chrome.backgroundColor.trim()
+      ? chrome.backgroundColor.trim()
+      : (typeof chrome?.color === "string" && chrome.color.trim() ? chrome.color.trim() : "#eef3f7");
+    try {
+      win.setBackgroundColor(backgroundColor);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  secureHandle("desktop:window-minimize", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    win.minimize();
+    return true;
+  });
+  secureHandle("desktop:window-toggle-maximize", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+    return win.isMaximized();
+  });
+  secureHandle("desktop:window-close", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    win.close();
+    return true;
+  });
+  secureHandle("desktop:window-is-maximized", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    return win.isMaximized();
   });
   secureHandle("desktop:get-install-status", () => getInstallStatus());
   secureHandle("desktop:get-gateway-status", async () => {
@@ -5847,19 +6146,20 @@ function registerIpc(): void {
   secureHandle("desktop:preview-my-drsai-model-connection", (_event, request: UpdateMyDrSaiModelConnectionRequest) =>
     previewMyDrSaiModelConnection(request),
   );
-  // V2: trimmed �� gateway has no model provider config routes (catalog only)
-  // secureHandle("desktop:diagnose-my-drsai-model-connection", (_event, online?: boolean) =>
-  //   diagnoseMyDrSaiModelConnection(online),
-  // );
+  // Keep the shared preload contract registered: the gateway serves provider
+  // save/test and Model Doctor routes, not just the model catalog.
+  secureHandle("desktop:diagnose-my-drsai-model-connection", (_event, online?: boolean) =>
+    diagnoseMyDrSaiModelConnection(online),
+  );
   secureHandle("desktop:restore-my-drsai-model-connection", (_event, expectedRevision?: string) =>
     restoreMyDrSaiModelConnection(expectedRevision),
   );
-  // secureHandle("desktop:save-my-drsai-model-provider", (_event, provider: string, request: SaveMyDrSaiModelProviderRequest) =>
-  //   saveMyDrSaiModelProvider(provider, request),
-  // );
-  // secureHandle("desktop:test-my-drsai-model-provider", (_event, provider: string, model?: string) =>
-  //   testMyDrSaiModelProvider(provider, model),
-  // );
+  secureHandle("desktop:save-my-drsai-model-provider", (_event, provider: string, request: SaveMyDrSaiModelProviderRequest) =>
+    saveMyDrSaiModelProvider(provider, request),
+  );
+  secureHandle("desktop:test-my-drsai-model-provider", (_event, provider: string, model?: string) =>
+    testMyDrSaiModelProvider(provider, model),
+  );
   secureHandle("desktop:probe-my-drsai-provider-model", (_event, provider: string, request) =>
     probeMyDrSaiProviderModel(provider, request as { model: string; operation: import("../../../shared/api/desktopApi").ModelCapabilityProbeOperation; protocol?: string }),
   );
@@ -5869,6 +6169,12 @@ function registerIpc(): void {
   secureHandle("desktop:preflight-my-drsai-model-provider-deletion", (_event, provider: string) => preflightMyDrSaiModelProviderDeletion(provider));
   secureHandle("desktop:delete-my-drsai-model-provider", (_event, provider: string, deleteCredential?: boolean) =>
     deleteMyDrSaiModelProvider(provider, deleteCredential),
+  );
+  secureHandle("desktop:preflight-my-drsai-model-deletion", (_event, provider: string, modelId: string) =>
+    preflightMyDrSaiModelDeletion(provider, modelId),
+  );
+  secureHandle("desktop:delete-my-drsai-model", (_event, provider: string, modelId: string, expectedRevision?: string) =>
+    deleteMyDrSaiModel(provider, modelId, expectedRevision),
   );
   secureHandle("desktop:create-thread", (_event, request) =>
     createThread(request),
@@ -5963,13 +6269,15 @@ function registerIpc(): void {
   secureHandle("desktop:get-my-drsai-agent-model-capability-status", (_event, agentId?: string) => getMyDrSaiAgentModelCapabilityStatus(agentId));
   secureHandle("desktop:update-my-drsai-agent-model-policy", (_event, agentId: string, policy: unknown) => updateMyDrSaiAgentModelPolicy(agentId, policy));
   secureHandle("desktop:migrate-my-drsai-agent-model-policy", (_event, agentId: string, legacyModel: string, expectedRevision?: string) => migrateMyDrSaiAgentModelPolicy(agentId, legacyModel, expectedRevision));
-  secureHandle("desktop:get-thread-snapshot-envelope", async (_event, threadId: string, requestId?: string, options?: { forceFresh?: boolean; minimumSequence?: number; expectedGeneration?: number; historyCursor?: string }) => {
+  secureHandle("desktop:get-thread-snapshot-envelope", async (_event, threadId: string, requestId?: string, options?: { forceFresh?: boolean; minimumSequence?: number; expectedGeneration?: number; historyCursor?: string; oaepHistoryCursor?: string }) => {
     if (typeof threadId !== "string" || (requestId !== undefined && (typeof requestId !== "string" || requestId.length > 160))) {
       throw new Error("Thread hydration request is invalid.");
     }
     if (options && (typeof options !== "object"
       || (options.forceFresh !== undefined && typeof options.forceFresh !== "boolean")
       || (options.historyCursor !== undefined && (typeof options.historyCursor !== "string" || options.historyCursor.length > 4096))
+      || (options.oaepHistoryCursor !== undefined && (typeof options.oaepHistoryCursor !== "string" || !options.oaepHistoryCursor || options.oaepHistoryCursor.length > 4096))
+      || (options.historyCursor !== undefined && options.oaepHistoryCursor !== undefined)
       || [options.minimumSequence, options.expectedGeneration].some((value) => value !== undefined && (!Number.isSafeInteger(value) || Number(value) < 0)))) {
       throw new Error("Thread hydration waterline is invalid.");
     }
@@ -6001,13 +6309,14 @@ function registerIpc(): void {
         try {
           runtimeEnvelope = await getRuntimeThreadSnapshotEnvelope(thread!, controller.signal, options);
         } catch (error) {
-          if (controller.signal.aborted) throw error;
+          if (controller.signal.aborted || options?.oaepHistoryCursor || options?.historyCursor) throw error;
           // Missing sessions and generation races fall through to persisted.
           runtimeEnvelope = null;
         }
       }
       controller.signal.throwIfAborted();
       if (runtimeEnvelope) {
+        if (runtimeEnvelope.snapshot.history?.oaepHasMore !== undefined) return runtimeEnvelope;
         // ``coalesceHydrationEnvelope`` may still prefer the fuller persisted
         // body, but the generation/sequence always come from the Runtime: a
         // waterline that does not match the live Patch stream is worse than a
@@ -6328,6 +6637,9 @@ function registerIpc(): void {
   secureHandle("desktop:reusable-tasks-list", () => listReusableTasks());
   secureHandle("desktop:reusable-task-save", (_event, request) => saveReusableTask(request));
   secureHandle("desktop:reusable-task-run-prepare", (_event, request) => prepareReusableTaskRun(request));
+  secureHandle("desktop:completion-notification-preference-get", () =>
+    getCompletionNotificationPreference(),
+  );
   secureHandle("desktop:completion-notification-preference-set", (_event, preference: CompletionNotificationPreference) =>
     setCompletionNotificationPreference(preference),
   );
@@ -7254,6 +7566,27 @@ app.whenReady().then(async () => {
     },
   });
   await restoreCompletionNotificationPreference();
+  createSystemTray({
+    showMainWindow: () => {
+      // Clicking the tray badge behaves like clicking the completion
+      // notification: open the most recently finished background conversation
+      // so its message history is directly on screen. Capture the target
+      // first: focusing the window clears the pending list.
+      const latest = pendingUnreadCompletions.splice(0).at(-1);
+      focusMainWindow();
+      if (latest && mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+        safeWebContentsSend(mainWindow.webContents, "desktop:completion-notification-click", {
+          target: latest,
+          clickedAt: new Date().toISOString(),
+        });
+      }
+    },
+    quitApp: () => {
+      // The tray "Quit" entry is the only in-app path that terminates the
+      // process; closing the window merely hides it to the tray.
+      app.quit();
+    },
+  });
   await restoreDesktopApprovalState();
   confirmPendingUpdateLaunch();
   restorePreparedUpdate();
@@ -7365,6 +7698,7 @@ app.whenReady().then(async () => {
   // the gateway is already running or nearly ready, so bootstrapDesktop is fast.
   void startGateway();
   createWindow();
+  startBootstrapRuntimeThreadCatalogSync();
   startUpdateScheduler();
   handleDeepLinkArgv(process.argv);
   app.on("activate", () => {
@@ -7653,6 +7987,7 @@ let gatewayShutdownStarted = false;
 
 app.on("before-quit", (event) => {
   appQuitRequested = true;
+  destroySystemTray();
   disposeAllDuplexVoiceSessions();
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
     cancelVoiceTranscriptionsForSender(mainWindow.webContents);

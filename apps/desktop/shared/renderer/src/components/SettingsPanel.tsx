@@ -1,6 +1,7 @@
+import { aggregateDirectModels, directModelRoute, directTokenBudget, replaceDirectModel, type DirectModelEntry } from "./providerDirectSetup";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Archive, AudioLines, Bot, ChevronDown, ChevronUp, Copy, FileText, Globe2, History, Image as ImageIcon,
+  Archive, AudioLines, ChevronDown, ChevronUp, Copy, FileText, Globe2, History, Image as ImageIcon,
   MessageSquare, PackageOpen, Pencil, Plug, RefreshCw, Settings, ShieldCheck,
   Smartphone, Terminal as TerminalIcon, Trash2, Type, Video, Volume2,
 } from "lucide-react";
@@ -35,12 +36,22 @@ import type { ModelSettingsDraftController } from "../containers/ModelSettingsCo
 import type { ThinkingEffort } from "./ChatWorkspace";
 import { describeUserFacingError } from "../userFacingErrors";
 import { userFacingFailureMessage } from "../userFacingLanguage";
+import { COLOR_PALETTES, FEATURED_COLOR_PALETTE_IDS, type ColorPaletteId } from "../colorPalettes";
+import {
+  describeSerialSttBlock,
+  getSerialSttStatusMessage,
+} from "../voice/voiceFailureCopy";
 import { normalizeRuntimeErrorEnvelope } from "../../../api/errorEnvelope";
 import {
   isSelectableModelAvailability,
   modelCatalogRecoveryCopy,
   supportsFullAgentPrimaryRuntime,
   supportsImageGenerationModel,
+  classifyModelFamily,
+  modelFamilyLabel,
+  orderModelEntriesByFamily,
+  type ModelFamily,
+  type OrderedModelEntry,
 } from "../modelCatalogRecovery";
 import { knownVoiceModelCapabilities, mergeKnownVoiceModalities } from "../modelVoiceCapabilities";
 import { getAgentModelOptions } from "../agentModelOptions";
@@ -87,7 +98,59 @@ const DEFAULT_AGENT_TEXT_MODEL = "deepseek-v4-pro";
 const LAST_THREAD_STORAGE_KEY = "opendrsai.lastThread";
 const AWAY_STARTED_AT_STORAGE_KEY = "opendrsai.awayStartedAt";
 
-export type SettingsPane = "general" | "voice" | "agent-defaults" | "model-providers" | "perceptors" | "executors" | "memories" | "agent-task" | "approvals" | "analytics" | "integrations" | "codex" | "remote-workspace" | "channels" | "archived-sessions" | "other";
+const MODEL_CENTER_RUNTIME_STATUS = {
+  available: { zh: "可用", en: "Available", tone: "success" },
+  configured_unverified: { zh: "已配置·未验证", en: "Configured · unverified", tone: "neutral" },
+  unavailable: { zh: "不可用", en: "Unavailable", tone: "muted" },
+  stale: { zh: "状态过期", en: "Status stale", tone: "warning" },
+  offline: { zh: "服务离线", en: "Service offline", tone: "warning" },
+  unauthorized: { zh: "认证失败", en: "Authentication failed", tone: "danger" },
+  error: { zh: "异常", en: "Error", tone: "danger" },
+} as const;
+
+function modelCenterRuntimeStatus(status: string | null | undefined, zh: boolean): { label: string; tone: string } {
+  const item = MODEL_CENTER_RUNTIME_STATUS[status as keyof typeof MODEL_CENTER_RUNTIME_STATUS]
+    ?? MODEL_CENTER_RUNTIME_STATUS.unavailable;
+  return { label: zh ? item.zh : item.en, tone: item.tone };
+}
+
+function modelCenterConnection(baseUrl: string): { host: string; title: string } {
+  try {
+    const parsed = new URL(baseUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("unsupported URL");
+    parsed.username = "";
+    parsed.password = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return { host: parsed.host, title: parsed.toString().replace(/\/$/, "") };
+  } catch {
+    const masked = baseUrl
+      .replace(/([?&](?:key|token|secret|password)=)[^&#\s]*/gi, "$1••••")
+      .replace(/:\/\/[^/@\s]+@/g, "://••••@")
+      .trim();
+    const short = masked.length > 32 ? `${masked.slice(0, 29)}…` : masked;
+    return { host: short || "—", title: short || "—" };
+  }
+}
+
+function modelCenterModalityLabel(modality: MyDrSaiModelModality, zh: boolean): string {
+  const labels: Record<MyDrSaiModelModality, [string, string]> = {
+    text: ["文本", "Text"], image: ["图像", "Image"], audio: ["音频", "Audio"], video: ["视频", "Video"],
+  };
+  return labels[modality] ? labels[modality][zh ? 0 : 1] : modality;
+}
+
+function modelCenterAgentReason(reason: string, zh: boolean): string {
+  if (!zh) return reason;
+  return reason
+    .replace("missing chat capability", "缺少对话能力")
+    .replace("missing tool_calling capability", "缺少工具调用能力")
+    .replace("missing text input modality", "缺少文本输入模态")
+    .replace("missing text output modality", "缺少文本输出模态")
+    .replaceAll("; ", "；");
+}
+
+export type SettingsPane = "general" | "voice" | "agent-defaults" | "model-providers" | "perceptors" | "executors" | "memories" | "approvals" | "analytics" | "integrations" | "codex" | "remote-workspace" | "channels" | "archived-sessions" | "other";
 
 /** Settings panes that are still rendered in the navigation but have no working
  * implementation behind them. They stay visible so the surface stays honest
@@ -234,6 +297,34 @@ function modelProviderDisplayLabel(provider: { id: string; label: string }, zh: 
   return provider.label;
 }
 
+/**
+ * Splits the provider tabs into the inline row plus the "更多 / 已保存" overflow menu.
+ *
+ * Primary providers always stay inline. On top of those, both the most recently
+ * used provider and the provider whose form is currently open are pinned inline:
+ * the tab the user is editing must never be hidden inside the overflow menu, and
+ * the custom-draft pseudo tab must never be rendered twice (it is already the
+ * first entry of the tab list).
+ */
+function computeModelProviderTabLayout({ tabs, primaryIds, draftTabId, pinned }: {
+  tabs: Array<{ id: string; label: string }>;
+  primaryIds: Set<string>;
+  draftTabId: string;
+  pinned: Array<{ id: string; label: string } | null | undefined>;
+}): { visible: Array<{ id: string; label: string }>; overflow: Array<{ id: string; label: string }> } {
+  // The draft pseudo tab is rendered by the caller as the first entry of the tab
+  // list, so it is never emitted here: a duplicated entry would be a second,
+  // non-functional "自定义接入" button in the row.
+  const visible = tabs.filter((provider) => provider.id !== draftTabId && primaryIds.has(provider.id));
+  const pinnedModelProviderIds = new Set<string>();
+  for (const entry of pinned) {
+    if (!entry || entry.id === draftTabId || pinnedModelProviderIds.has(entry.id)) continue;
+    pinnedModelProviderIds.add(entry.id);
+    if (!visible.some((provider) => provider.id === entry.id)) visible.push(entry);
+  }
+  return { visible, overflow: tabs.filter((provider) => provider.id !== draftTabId && !primaryIds.has(provider.id) && !pinnedModelProviderIds.has(provider.id)) };
+}
+
 function ModelProviderLogo({ provider }: { provider: string }) {
   const normalized = provider.toLowerCase();
   const kind = normalized === "zhizengzeng" ? "zhizz" : normalized.startsWith("custom") ? "custom" : normalized;
@@ -320,6 +411,42 @@ function defaultTextModelCapabilities(modelId: string): MyDrSaiModelCapability[]
   return known.length ? known : ["chat"];
 }
 
+/** Family order used for both the separator sequence and row sorting. */
+const MODEL_FAMILY_ORDER: ModelFamily[] = ["chat", "multimodal_input", "image_generation", "audio", "other"];
+
+type ProviderModelEntry =
+  | { kind: "family"; family: ModelFamily; count: number }
+  | { kind: "model"; model: string };
+
+/**
+ * Classify each catalog row and flatten it into separator + row order.
+ *
+ * Every emitted entry becomes a direct child of ``.model-provider-model-list``
+ * (a grid whose rows use ``subgrid``); nothing here may wrap rows in another
+ * element, or the table collapses into one column per wrapper.
+ */
+function orderedProviderModelEntries(
+  models: string[],
+  configs: Record<string, MyDrSaiProviderModelConfig>,
+  wireApi: MyDrSaiModelApiProtocol,
+  aliases: Record<string, string>,
+  operations: Record<string, RuntimeModelOperation[]>,
+): OrderedModelEntry[] {
+  return orderModelEntriesByFamily(models.map((model) => {
+    const config = configs[model] ?? providerModelConfigFor(model, { wire_api: wireApi, model_aliases: aliases, model_operations: operations });
+    return {
+      id: model,
+      family: classifyModelFamily({
+        alias: config.alias,
+        model,
+        operations: config.capabilities as unknown as readonly string[],
+        input_modalities: config.input_modalities as unknown as readonly string[],
+        output_modalities: config.output_modalities as unknown as readonly string[],
+      }),
+    };
+  }));
+}
+
 function providerModelConfigFor(
   modelId: string,
   provider: { wire_api: MyDrSaiModelApiProtocol; model_configs?: Record<string, MyDrSaiProviderModelConfig>; model_aliases?: Record<string, string>; model_operations?: Record<string, RuntimeModelOperation[]> } | undefined,
@@ -327,10 +454,7 @@ function providerModelConfigFor(
   const configured = provider?.model_configs?.[modelId];
   if (configured) {
     const legacy = (configured as unknown as { modalities?: MyDrSaiModelModality[] }).modalities;
-    const capabilities = [...new Set([
-      ...(configured.capabilities ?? ["chat"]),
-      ...knownTextModelCapabilities(modelId),
-    ])];
+    const capabilities = configured.capabilities ?? defaultTextModelCapabilities(modelId);
     const output = legacy ? [
       ...(["chat", "tool_calling", "reasoning", "speech_to_text"].some((capability) => capabilities.includes(capability as MyDrSaiModelCapability)) ? ["text" as const] : []),
       ...(["image_generation", "image_edit"].some((capability) => capabilities.includes(capability as MyDrSaiModelCapability)) ? ["image" as const] : []),
@@ -363,7 +487,7 @@ function providerModelConfigFor(
     output_modalities: knownVoice?.outputModalities ?? (speechToText ? ["text"] : textToSpeech ? ["audio"] : operations.some((operation) => operation === "image_generation" || operation === "image_edit") ? ["image"] : ["text"]),
     api_protocol: provider?.wire_api ?? "openai",
     enabled: true,
-    capabilities: knownVoice?.capabilities ?? (speechToText ? ["speech_to_text"] : textToSpeech ? ["text_to_speech"] : [...new Set([...defaultTextModelCapabilities(modelId), ...operations])]),
+    capabilities: knownVoice?.capabilities ?? (speechToText ? ["speech_to_text"] : textToSpeech ? ["text_to_speech"] : operations.some((operation) => operation === "image_generation" || operation === "image_edit") ? operations.filter((operation) => operation === "image_generation" || operation === "image_edit") : [...new Set([...defaultTextModelCapabilities(modelId), ...operations])]),
   };
 }
 
@@ -459,6 +583,24 @@ function ModelApiProtocolBadge({ protocol, zh, onClick }: { protocol: string; zh
   const marks = { openai: "OA", anthropic: "A", google: "G" } as const;
   const label = labels[kind];
   return <div className={`model-api-protocols ${onClick ? "is-editable" : ""}`} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onClick={onClick} onKeyDown={onClick ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onClick(); } } : undefined}><span className={`model-api-protocol protocol-${kind} is-supported`} title={label} aria-label={label}><i aria-hidden>{marks[kind]}</i></span></div>;
+}
+
+function ModelFamilyBadge({ family, zh }: { family: ModelFamily; zh: boolean }) {
+  // Model families are disjoint (chat / multimodal-input vs image generation).
+  // Showing the family keeps the two visually separated even though both rows
+  // can carry an "Image" modality badge.
+  const tone = family === "image_generation"
+    ? "is-generation"
+    : family === "multimodal_input"
+      ? "is-multimodal"
+      : family === "audio"
+        ? "is-audio"
+        : "is-chat";
+  return (
+    <span className={`model-family-badge ${tone}`} data-family={family} title={modelFamilyLabel(family, zh)}>
+      {modelFamilyLabel(family, zh)}
+    </span>
+  );
 }
 
 function createAgentModelPolicyDraft(policy: MyDrSaiAgentModelPolicy): AgentModelPolicyDraft {
@@ -641,6 +783,7 @@ export function SettingsPanel({
   modelSettings,
   agents,
   appearance,
+  colorPalette,
   codexStatus,
   approvalCenterPanel,
   channelsPanel,
@@ -666,13 +809,13 @@ export function SettingsPanel({
   onCodexLogout,
   onUseCodex,
   onAppearanceChange,
+  onColorPaletteChange,
   onCompletionNotificationsChange,
   onCopyDiagnostics,
   onDeveloperModeChange,
   onExportLocalData,
   onLanguageChange,
   onLogout,
-  onNewAgentTask,
   onOpenMobilePairing,
   onOpenBrowserPanel,
   onOpenPath,
@@ -712,6 +855,7 @@ export function SettingsPanel({
   modelSettings: ModelSettingsDraftController;
   agents: DesktopAgent[];
   appearance: AppearanceMode;
+  colorPalette: ColorPaletteId;
   codexStatus: CodexBackendStatus | null;
   approvalCenterPanel: React.ReactNode;
   channelsPanel: React.ReactNode;
@@ -737,13 +881,13 @@ export function SettingsPanel({
   onCodexLogout: () => void | Promise<void>;
   onUseCodex: () => void | Promise<void>;
   onAppearanceChange: (appearance: AppearanceMode) => void;
+  onColorPaletteChange: (palette: ColorPaletteId) => void;
   onCompletionNotificationsChange: (enabled: boolean) => void;
   onCopyDiagnostics: () => void;
   onDeveloperModeChange: (enabled: boolean) => void;
   onExportLocalData: () => void;
   onLanguageChange: (language: AppLanguage) => void;
   onLogout: () => Promise<void>;
-  onNewAgentTask: () => void;
   onOpenMobilePairing: () => void;
   onOpenBrowserPanel: () => void;
   onOpenPath: (path: string) => void;
@@ -800,12 +944,29 @@ export function SettingsPanel({
     newProviderModelDraft, setNewProviderModelDraft,
   } = modelSettings;
   const zh = language === "zh";
+  const [colorPalettesExpanded, setColorPalettesExpanded] = useState(
+    () => !FEATURED_COLOR_PALETTE_IDS.includes(colorPalette),
+  );
+  const visibleColorPalettes = useMemo(() => {
+    if (colorPalettesExpanded) return COLOR_PALETTES;
+    const featured = FEATURED_COLOR_PALETTE_IDS
+      .map((id) => COLOR_PALETTES.find((palette) => palette.id === id))
+      .filter((palette): palette is (typeof COLOR_PALETTES)[number] => Boolean(palette));
+    if (FEATURED_COLOR_PALETTE_IDS.includes(colorPalette)) return featured;
+    const current = COLOR_PALETTES.find((palette) => palette.id === colorPalette);
+    return current ? [...featured, current] : featured;
+  }, [colorPalette, colorPalettesExpanded]);
+  const hiddenColorPaletteCount = Math.max(0, COLOR_PALETTES.length - visibleColorPalettes.length);
   const [modelCapabilityResults, setModelCapabilityResults] = useState<Record<string, import("@shared/desktopApi").ModelCapabilityProbeResult>>({});
   const [runningModelCapability, setRunningModelCapability] = useState<string | null>(null);
   const [providerModelEditor, setProviderModelEditor] = useState<ProviderModelEditorDraft | null>(null);
+  const [providerModelEditorBaseline, setProviderModelEditorBaseline] = useState("");
+  const providerModelEditorDirty = providerModelEditor !== null && JSON.stringify(providerModelEditor) !== providerModelEditorBaseline;
   const [providerModelEditorError, setProviderModelEditorError] = useState<string | null>(null);
   const [addedProviderProtocols, setAddedProviderProtocols] = useState<Set<MyDrSaiModelApiProtocol>>(new Set());
-  const providerTabAfterProviderSaveRef = useRef<string | null>(null);
+  const [modelCenterTab, setModelCenterTab] = useState<"mine" | "official">("mine");
+  const providerEntryInitializedRef = useRef(false);
+  const [lastModelTestDraftFingerprint, setLastModelTestDraftFingerprint] = useState<string | null>(null);
   const selectedSettingsAgent = agents.find((agent) => agent.id === selectedAgentId);
   const [activeAgentConfigurationTab, setActiveAgentConfigurationTab] = useState<AgentConfigurationTab>(() =>
     selectedSettingsAgent ? getAgentConfigurationTab(selectedSettingsAgent) : "opendrsai");
@@ -981,69 +1142,46 @@ export function SettingsPanel({
     void onLoadArchivedThreads(true).catch(() => { archivedInitialLoadRequestedRef.current = false; });
   }, [activePane]);
 
-  const modelConnectionRevision = myDrSaiConfig?.modelConnection?.revision;
-  const configuredModelProvider = myDrSaiConfig?.modelConnection?.model_provider;
   const modelProviderInventory = myDrSaiConfig?.modelConnection?.providers
     ?? myDrSaiConfig?.modelProviders
     ?? [];
+  const modelCenterRuntime = useMemo(() => models.flatMap((model) => {
+    const providerId = model.provider_id;
+    const modelId = model.model;
+    if (!providerId || !modelId) return [];
+    return [{
+      ref: { provider_id: providerId, model_id: modelId },
+      display_name: model.display_name || model.alias || modelId,
+      input_modalities: model.input_modalities ?? [],
+      output_modalities: model.output_modalities ?? [],
+      operations: model.operations ?? [],
+      reasoning_efforts: model.reasoning_efforts ?? [],
+      token_limit: model.token_limit,
+      max_output_tokens: model.max_tokens,
+      availability: model.availability ?? "configured_unverified",
+      capability_source: model.capability_source ?? "unknown",
+      capability_confidence: "unknown" as const,
+      origin: model.origin,
+    }];
+  }), [models]);
+  const directModels = useMemo(
+    () => aggregateDirectModels(modelProviderInventory, modelCenterRuntime),
+    [modelProviderInventory, modelCenterRuntime],
+  );
+  // Initialize once, not on inventory/probe refresh: those must not erase a draft.
   useEffect(() => {
-    const connection = myDrSaiConfig?.modelConnection;
-    if (!connection) return;
-    const providerTabAfterSave = providerTabAfterProviderSaveRef.current;
-    if (providerTabAfterSave) {
-      providerTabAfterProviderSaveRef.current = null;
-      setActiveModelProviderTab(providerTabAfterSave);
-      if (!["hepai", "deepseek", "openai", "anthropic"].includes(providerTabAfterSave)) setRecentOverflowModelProviderTab(providerTabAfterSave);
-      return;
-    }
-    setActiveModelProviderTab(connection.model_provider);
-    if (!["hepai", "deepseek", "openai", "anthropic"].includes(connection.model_provider)) setRecentOverflowModelProviderTab(connection.model_provider);
-    setModelDraft(connection.model);
-    setProviderDraft(connection.model_provider);
-    setBaseUrlDraft(connection.provider.base_url);
-    setAnthropicBaseUrlDraft(connection.provider.anthropic_base_url ?? "");
-    setGeminiBaseUrlDraft(connection.provider.google_base_url ?? "");
-    setAddedProviderProtocols(new Set());
-    setApiKeyDraft("");
-    setApiKeyEnvDraft(connection.provider.api_key_source?.startsWith("env:") ? connection.provider.api_key_source.slice(4) : "");
-    setWireApiDraft(connection.provider.wire_api);
-    setKeySourceDraft(connection.provider.requires_api_key ? (connection.provider.api_key_source?.startsWith("env:") ? "env" : "secure") : "none");
-    const configuredModels = providerDraftModels(connection.provider, [connection.model]);
-    setProviderModelsDraft(configuredModels);
-    setProviderModelAliasesDraft(connection.provider.model_aliases ?? {});
-    setProviderModelOperationsDraft(connection.provider.model_operations ?? {});
-    setProviderModelConfigsDraft(providerModelConfigsFor(configuredModels, connection.provider));
-  // Probe refreshes replace the connection object without changing its
-  // configuration revision. Keep unsaved Provider drafts in that case.
-  }, [modelConnectionRevision, configuredModelProvider]);
+    if (activePane !== "model-providers" || providerEntryInitializedRef.current) return;
+    providerEntryInitializedRef.current = true;
+    if (!providerDraft) addCustomModelProvider();
+  }, [activePane]);
+
+  useEffect(() => {
+    if (activePane === "model-providers" && !providerModelEditor) openProviderModelEditor(modelDraft);
+  }, [activePane, providerDraft, modelDraft, providerModelEditor]);
 
   useEffect(() => {
     void desktopApi.listMyDrSaiModelProviderPresets().then(setModelProviderPresets).catch(() => setModelProviderPresets([]));
   }, []);
-
-  useEffect(() => {
-    if (activePane !== "model-providers") return;
-    const connection = myDrSaiConfig?.modelConnection;
-    const provider = modelProviderInventory.find((item) => item.name === activeModelProviderTab)
-      ?? (connection?.provider.name === activeModelProviderTab ? connection.provider : undefined);
-    if (!provider) return;
-    const configuredModels = providerDraftModels(provider, connection?.model_provider === provider.name ? [connection.model] : []);
-    setProviderDraft(provider.name);
-    setBaseUrlDraft(provider.base_url);
-    setAnthropicBaseUrlDraft(provider.anthropic_base_url ?? "");
-    setGeminiBaseUrlDraft(provider.google_base_url ?? "");
-    setAddedProviderProtocols(new Set());
-    setWireApiDraft(provider.wire_api);
-    setKeySourceDraft(provider.requires_api_key ? (provider.api_key_source?.startsWith("env:") ? "env" : "secure") : "none");
-    setApiKeyDraft("");
-    setApiKeyEnvDraft(provider.api_key_source?.startsWith("env:") ? provider.api_key_source.slice(4) : "");
-    setProviderModelsDraft(configuredModels);
-    setProviderModelAliasesDraft(provider.model_aliases ?? {});
-    setProviderModelOperationsDraft(provider.model_operations ?? {});
-    setProviderModelConfigsDraft(providerModelConfigsFor(configuredModels, provider));
-    setModelDraft((current) => configuredModels.includes(current) ? current : configuredModels[0] ?? "");
-    setNewProviderModelDraft(null);
-  }, [activePane, activeModelProviderTab, modelConnectionRevision, modelProviderInventory]);
 
   function applyModelProviderPreset(presetId: string): void {
     const preset = effectiveModelProviderPresets.find((item) => item.id === presetId);
@@ -1065,7 +1203,7 @@ export function SettingsPanel({
     setDiscoveredModels([]);
   }
 
-  function selectModelProviderTab(presetId: string): void {
+  function selectModelProviderTab(presetId: string, connection = myDrSaiConfig?.modelConnection): void {
     setActiveModelProviderTab(presetId);
     setNewProviderModelDraft(null);
     if (!["hepai", "deepseek", "openai", "anthropic"].includes(presetId)) setRecentOverflowModelProviderTab(presetId);
@@ -1073,7 +1211,6 @@ export function SettingsPanel({
     setModelTestOutput(null);
     setModelConfigConflict(false);
     setDiscoveredModels([]);
-    const connection = myDrSaiConfig?.modelConnection;
     const preset = effectiveModelProviderPresets.find((item) => item.id === presetId);
     if (connection?.model_provider === presetId) {
       setModelDraft(connection.model);
@@ -1086,16 +1223,16 @@ export function SettingsPanel({
       setKeySourceDraft(connection.provider.requires_api_key ? (connection.provider.api_key_source?.startsWith("env:") ? "env" : "secure") : "none");
       setApiKeyDraft("");
       setApiKeyEnvDraft(connection.provider.api_key_source?.startsWith("env:") ? connection.provider.api_key_source.slice(4) : "");
-      const configuredModels = connection.provider.models?.length ? connection.provider.models : [connection.model];
+      const configuredModels = providerDraftModels(connection.provider, [connection.model]);
       setProviderModelsDraft(configuredModels);
       setProviderModelAliasesDraft(connection.provider.model_aliases ?? {});
       setProviderModelOperationsDraft(connection.provider.model_operations ?? {});
       setProviderModelConfigsDraft(providerModelConfigsFor(configuredModels, connection.provider));
       return;
     }
-    const configuredProvider = modelProviderInventory.find((provider) => provider.name === presetId);
+    const configuredProvider = (connection?.providers ?? modelProviderInventory).find((provider) => provider.name === presetId);
     if (configuredProvider) {
-      const configuredModels = configuredProvider.models?.length ? configuredProvider.models : preset?.default_model ? [preset.default_model] : [];
+      const configuredModels = providerDraftModels(configuredProvider, preset?.default_model ? [preset.default_model] : []);
       setModelDraft(configuredModels[0] ?? "");
       setProviderDraft(configuredProvider.name);
       setBaseUrlDraft(configuredProvider.base_url);
@@ -1116,9 +1253,13 @@ export function SettingsPanel({
   }
 
   function addCustomModelProvider(): void {
-    setActiveModelProviderTab("custom");
-    setRecentOverflowModelProviderTab("custom");
-    setProviderDraft("custom");
+    setProviderModelEditor(null);
+    setActiveModelProviderTab("__new-custom-provider__");
+    const names = new Set(modelProviderInventory.map((provider) => provider.name));
+    if (myDrSaiConfig?.modelConnection) names.add(myDrSaiConfig.modelConnection.provider.name);
+    let name = "custom";
+    for (let suffix = 2; names.has(name); suffix += 1) name = `custom-${suffix}`;
+    setProviderDraft(name);
     setModelDraft("");
     setBaseUrlDraft("");
     setAnthropicBaseUrlDraft("");
@@ -1135,31 +1276,26 @@ export function SettingsPanel({
     setProviderModelConfigsDraft({});
     setNewProviderModelDraft(null);
     setModelConfigMessage(null);
+    setModelTestOutput(null);
+    setModelConfigConflict(false);
   }
 
-  function addProviderModel(): void {
-    setNewProviderModelDraft("");
-    setModelConfigMessage(null);
-  }
-
-  function commitProviderModel(): void {
-    const value = newProviderModelDraft?.trim() ?? "";
-    if (!value || value.length > 256 || /[\r\n\0]/.test(value)) {
-      setModelConfigMessage(zh ? "请输入有效的模型 ID。" : "Enter a valid model ID.");
-      return;
+  async function navigateModelProvider(id: string): Promise<void> {
+    if (modelConfigBusy || runningModelCapability || id === activeModelProviderTab) return;
+    if (newProviderModelDraft?.trim() || (modelProviderDirty && (baseUrlDraft.trim() || apiKeyDraft.trim() || providerModelsDraft.length))) {
+      const confirmed = await requestAppDecision({
+        id: "switch-model-provider-draft",
+        title: zh ? "放弃未保存的提供方草稿？" : "Discard unsaved provider draft?",
+        description: zh ? "切换提供方会丢弃当前草稿。取消后可先保存提供方。" : "Switching discards this draft. Cancel to save the provider first.",
+        confirmLabel: zh ? "放弃并切换" : "Discard and switch",
+      });
+      if (!confirmed) return;
     }
-    const existing = providerModelsDraft.find((model) => model.toLowerCase() === value.toLowerCase());
-    if (existing) {
-      setModelDraft(existing);
-      setNewProviderModelDraft(null);
-      setModelConfigMessage(zh ? `模型“${existing}”已在列表中。` : `Model “${existing}” is already in the list.`);
-      return;
-    }
-    setProviderModelsDraft((current) => [...current, value]);
-    setProviderModelConfigsDraft((current) => ({ ...current, [value]: providerModelConfigFor(value, { wire_api: wireApiDraft }) }));
-    setModelDraft(value);
-    setNewProviderModelDraft(null);
-    setModelConfigMessage(null);
+    setLastModelTestDraftFingerprint(null);
+    setProviderModelEditor(null);
+    setModelCapabilityResults({});
+    if (id === "__new-custom-provider__") addCustomModelProvider();
+    else selectModelProviderTab(id);
   }
 
   function removeProviderModel(model: string): void {
@@ -1185,9 +1321,59 @@ export function SettingsPanel({
     });
   }
 
+  async function deleteSavedProviderModel(model: string, providerOverride?: string): Promise<void> {
+    if (modelConfigBusy) return;
+    if (modelProviderDirty) {
+      setModelConfigMessage(zh ? "请先保存或放弃当前草稿，再删除已保存模型。" : "Save or discard the current draft before deleting a saved model.");
+      return;
+    }
+    const provider = providerOverride?.trim() || providerDraft.trim();
+    setModelConfigBusy(true);
+    setModelConfigMessage(null);
+    setModelConfigConflict(false);
+    try {
+      const preflight = await desktopApi.preflightMyDrSaiModelDeletion(provider, model);
+      if (!preflight.can_delete) {
+        const labels = preflight.references.map((reference) => reference.label).join(", ");
+        setModelConfigMessage(zh ? `该模型仍被引用：${labels}` : `This model is still referenced by: ${labels}`);
+        return;
+      }
+      const confirmed = await requestAppDecision({
+        id: `delete-provider-model-${provider}-${model}`,
+        tone: "danger",
+        title: preflight.action === "disable"
+          ? (zh ? `停用内置模型 ${model}？` : `Disable built-in model ${model}?`)
+          : (zh ? `删除模型 ${model}？` : `Delete model ${model}?`),
+        description: preflight.action === "disable"
+          ? (zh ? "内置模型不会被物理删除，只会在此 Provider 中停用。" : "Built-in models are not physically deleted; this model will be disabled for this provider.")
+          : (zh ? "只会删除此模型；Provider、其他模型、连接和凭据都会保留。" : "Only this model will be deleted. The provider, its other models, connection, and credentials are retained."),
+        confirmLabel: preflight.action === "disable" ? (zh ? "停用模型" : "Disable model") : (zh ? "删除模型" : "Delete model"),
+      });
+      if (!confirmed) return;
+      const result = await desktopApi.deleteMyDrSaiModel(provider, model, myDrSaiConfig?.modelConnection?.revision);
+      const refreshed = await desktopApi.getMyDrSaiConfig();
+      if (refreshed.modelConnection) {
+        onModelConnectionUpdated(refreshed.modelConnection);
+        selectModelProviderTab(provider, refreshed.modelConnection);
+      } else {
+        removeProviderModel(model);
+      }
+      onRefreshAgentModels();
+      setModelConfigMessage(result.action === "disable"
+        ? (zh ? "内置模型已停用。" : "Built-in model disabled.")
+        : (zh ? "模型已删除；Provider、其他模型和凭据已保留。" : "Model deleted; provider, other models, and credentials were retained."));
+    } catch (error) {
+      const envelope = normalizeRuntimeErrorEnvelope(error);
+      setModelConfigConflict(envelope.code === "config_conflict");
+      setModelConfigMessage(userFacingFailureMessage(error, language, "operation"));
+    } finally {
+      setModelConfigBusy(false);
+    }
+  }
+
   function openProviderModelEditor(model: string): void {
     const config = providerModelConfigsDraft[model] ?? providerModelConfigFor(model, { wire_api: wireApiDraft, model_aliases: providerModelAliasesDraft, model_operations: providerModelOperationsDraft });
-    setProviderModelEditor({
+    const editor: ProviderModelEditorDraft = {
       originalId: model,
       modelId: model,
       alias: config.alias ?? "",
@@ -1196,15 +1382,18 @@ export function SettingsPanel({
       apiProtocol: config.api_protocol,
       enabled: config.enabled,
       capabilities: [...config.capabilities],
-      tokenLimit: config.token_limit !== undefined ? String(config.token_limit) : "",
+      tokenLimit: config.token_limit !== undefined && config.max_tokens !== undefined ? String(config.token_limit - config.max_tokens) : "",
       maxTokens: config.max_tokens !== undefined ? String(config.max_tokens) : "",
       reasoningEfforts: PROVIDER_REASONING_EFFORT_OPTIONS.filter((effort) => (config.reasoning_efforts ?? []).includes(effort)),
       origin: config.origin ?? null,
-    });
+    };
+    setProviderModelEditor(editor);
+    setProviderModelEditorBaseline(JSON.stringify(editor));
     setProviderModelEditorError(null);
   }
 
   function duplicateProviderModel(model: string): void {
+    if (providerModelEditorDirty && !saveProviderModelEditor()) return;
     const base = `${model}-copy`;
     let copyId = base;
     let suffix = 2;
@@ -1212,7 +1401,7 @@ export function SettingsPanel({
     const sourceIndex = providerModelsDraft.indexOf(model);
     const nextModels = [...providerModelsDraft];
     nextModels.splice(sourceIndex + 1, 0, copyId);
-    setProviderModelsDraft(nextModels);
+    setProviderModelsDraft((current) => [...current, copyId]);
     const config = providerModelConfigsDraft[model] ?? providerModelConfigFor(model, { wire_api: wireApiDraft, model_aliases: providerModelAliasesDraft, model_operations: providerModelOperationsDraft });
     const alias = config.alias ?? "";
     if (alias) setProviderModelAliasesDraft((current) => ({ ...current, [copyId]: alias }));
@@ -1222,102 +1411,100 @@ export function SettingsPanel({
     // built-in model: that is the supported way to customise a Product model.
     const copiedConfig: MyDrSaiProviderModelConfig = { ...config, input_modalities: [...config.input_modalities], output_modalities: [...config.output_modalities], capabilities: [...config.capabilities], origin: "user" };
     setProviderModelConfigsDraft((current) => ({ ...current, [copyId]: copiedConfig }));
-    setProviderModelEditor({ originalId: copyId, modelId: copyId, alias, inputModalities: [...copiedConfig.input_modalities], outputModalities: [...copiedConfig.output_modalities], apiProtocol: copiedConfig.api_protocol, enabled: copiedConfig.enabled, capabilities: [...copiedConfig.capabilities], tokenLimit: copiedConfig.token_limit !== undefined ? String(copiedConfig.token_limit) : "", maxTokens: copiedConfig.max_tokens !== undefined ? String(copiedConfig.max_tokens) : "", reasoningEfforts: PROVIDER_REASONING_EFFORT_OPTIONS.filter((effort) => (copiedConfig.reasoning_efforts ?? []).includes(effort)), origin: "user" });
+    setProviderModelEditor({ originalId: copyId, modelId: copyId, alias, inputModalities: [...copiedConfig.input_modalities], outputModalities: [...copiedConfig.output_modalities], apiProtocol: copiedConfig.api_protocol, enabled: copiedConfig.enabled, capabilities: [...copiedConfig.capabilities], tokenLimit: copiedConfig.token_limit !== undefined && copiedConfig.max_tokens !== undefined ? String(copiedConfig.token_limit - copiedConfig.max_tokens) : "", maxTokens: copiedConfig.max_tokens !== undefined ? String(copiedConfig.max_tokens) : "", reasoningEfforts: PROVIDER_REASONING_EFFORT_OPTIONS.filter((effort) => (copiedConfig.reasoning_efforts ?? []).includes(effort)), origin: "user" });
     setProviderModelEditorError(null);
   }
 
-  function saveProviderModelEditor(): void {
-    if (!providerModelEditor) return;
-    // A built-in (Product) entry cannot be redefined: OpenDrSai regenerates that
-    // file on every launch, so the enable flag is the only thing a user may
-    // express here. Switching it off is the reversible kill switch; anything
-    // else must go through "copy as my model", which creates a new id.
-    const productOwned = providerModelEditor.origin === "product";
-    const nextId = productOwned ? providerModelEditor.originalId : providerModelEditor.modelId.trim();
-    if (!nextId || nextId.length > 256 || /[\r\n\0]/.test(nextId)) {
-      setProviderModelEditorError(zh ? "请输入有效的模型 ID。" : "Enter a valid model ID.");
-      return;
-    }
-    if (providerModelEditor.inputModalities.length === 0 || providerModelEditor.outputModalities.length === 0) {
-      setProviderModelEditorError(zh ? "至少选择一种模态。" : "Select at least one modality.");
-      return;
-    }
-    const tokenLimit = parseDeclaredTokens(providerModelEditor.tokenLimit);
-    if (!tokenLimit.ok) {
-      setProviderModelEditorError(zh ? "上下文长度必须是 1 到 100000000 之间的整数，留空表示使用内置默认值。" : "Context window must be an integer between 1 and 100000000, or empty to use the built-in default.");
-      return;
-    }
-    const maxTokens = parseDeclaredTokens(providerModelEditor.maxTokens);
-    if (!maxTokens.ok) {
-      setProviderModelEditorError(zh ? "最大输出长度必须是 1 到 100000000 之间的整数，留空表示使用内置默认值。" : "Max output must be an integer between 1 and 100000000, or empty to use the built-in default.");
-      return;
-    }
-    if (tokenLimit.value !== null && maxTokens.value !== null && maxTokens.value > tokenLimit.value) {
-      setProviderModelEditorError(zh ? "最大输出长度不能超过上下文长度。" : "Max output tokens cannot exceed the context window.");
-      return;
-    }
-    const reasoningEfforts = PROVIDER_REASONING_EFFORT_OPTIONS.filter((effort) => providerModelEditor.reasoningEfforts.includes(effort));
-    if (reasoningEfforts.length && !providerModelEditor.capabilities.includes("reasoning")) {
-      setProviderModelEditorError(zh ? "推理强度需要先启用“推理”能力。" : "Reasoning efforts require the reasoning capability.");
-      return;
-    }
-    const protocolHasHost = providerModelEditor.apiProtocol === wireApiDraft
-      || (providerModelEditor.apiProtocol === "anthropic" && Boolean(anthropicBaseUrlDraft.trim()))
-      || (providerModelEditor.apiProtocol === "gemini" && Boolean(geminiBaseUrlDraft.trim()));
-    if (!protocolHasHost) {
-      setProviderModelEditorError(zh ? "请先在“主机与协议”中添加该 API 协议的主机。" : "Add a host for this API protocol under Hosts and protocols first.");
-      return;
-    }
-    const duplicate = providerModelsDraft.find((model) => model !== providerModelEditor.originalId && model.toLowerCase() === nextId.toLowerCase());
-    if (duplicate) {
-      setProviderModelEditorError(zh ? `模型“${duplicate}”已在列表中。` : `Model “${duplicate}” is already in the list.`);
-      return;
-    }
-    setProviderModelsDraft((current) => current.map((model) => model === providerModelEditor.originalId ? nextId : model));
-    setProviderModelAliasesDraft((current) => {
-      const next = { ...current };
-      delete next[providerModelEditor.originalId];
-      const alias = providerModelEditor.alias.trim();
-      if (alias && alias !== nextId) next[nextId] = alias;
-      return next;
+  // Build a synchronous snapshot. State setters must never be a save boundary.
+  function currentModelSnapshot(): { id: string; models: Record<string, MyDrSaiProviderModelConfig> } {
+    const editor = providerModelEditor;
+    if (!editor) throw new Error(zh ? "请填写模型 ID。" : "Enter a model ID.");
+    const original = providerModelConfigsDraft[editor.originalId];
+    if (editor.origin === "product" && original) return { id: editor.originalId, models: { ...modelConfigsForSave(), [editor.originalId]: providerModelConfigForWrite({ ...original, enabled: editor.enabled }) } };
+    const budget = directTokenBudget(editor.tokenLimit, editor.maxTokens);
+    if (!editor.inputModalities.length || !editor.outputModalities.length) throw new Error(zh ? "请选择输入和输出模态。" : "Select input and output modalities.");
+    const image = editor.capabilities.includes("image_generation");
+    if (image && (editor.capabilities.some((capability) => ["chat", "tool_calling", "reasoning"].includes(capability)) || !editor.outputModalities.includes("image"))) throw new Error(zh ? "图像生成须输出 image，且不能混用对话能力。" : "Image generation must output images and cannot declare chat capabilities.");
+    if (!image && editor.capabilities.includes("chat") && editor.outputModalities.includes("image")) throw new Error(zh ? "输出图像请切换为图像生成类型。" : "Select image generation to output images.");
+    const protocolHasHost = editor.apiProtocol === wireApiDraft || (editor.apiProtocol === "anthropic" && anthropicBaseUrlDraft.trim()) || (editor.apiProtocol === "gemini" && geminiBaseUrlDraft.trim());
+    if (!protocolHasHost) throw new Error(zh ? "请在高级连接设置中填写所选协议的主机，或更改主连接协议。" : "Set the selected protocol host in advanced connection settings, or change the primary connection protocol.");
+    const { alias: _alias, reasoning_efforts: _efforts, ...metadata } = original ?? {};
+    const config = providerModelConfigForWrite({ ...metadata,
+      ...(editor.alias.trim() ? { alias: editor.alias.trim() } : {}),
+      input_modalities: editor.inputModalities, output_modalities: editor.outputModalities,
+      api_protocol: editor.apiProtocol, enabled: editor.enabled, capabilities: editor.capabilities, ...budget,
+      ...(editor.reasoningEfforts.length && editor.capabilities.includes("reasoning") ? { reasoning_efforts: editor.reasoningEfforts } : {}),
     });
-    setProviderModelOperationsDraft((current) => {
-      const next = { ...current };
-      delete next[providerModelEditor.originalId];
-      const operations: RuntimeModelOperation[] = [];
-      if (providerModelEditor.capabilities.includes("image_generation")) operations.push("image_generation");
-      if (providerModelEditor.capabilities.includes("image_edit")) operations.push("image_edit");
-      if (operations.length) next[nextId] = operations;
-      return next;
-    });
-    setProviderModelConfigsDraft((current) => {
-      const next = { ...current };
-      const upstreamId = current[providerModelEditor.originalId]?.upstream_id;
-      delete next[providerModelEditor.originalId];
-      // Field order mirrors the Provider catalog payload so the unsaved-change
-      // comparison stays a plain JSON diff.
-      next[nextId] = {
-        ...(providerModelEditor.alias.trim() ? { alias: providerModelEditor.alias.trim() } : {}),
-        input_modalities: providerModelEditor.inputModalities,
-        output_modalities: providerModelEditor.outputModalities,
-        api_protocol: providerModelEditor.apiProtocol,
-        enabled: providerModelEditor.enabled,
-        capabilities: providerModelEditor.capabilities,
-        ...(upstreamId ? { upstream_id: upstreamId } : {}),
-        ...(tokenLimit.value !== null ? { token_limit: tokenLimit.value } : {}),
-        ...(maxTokens.value !== null ? { max_tokens: maxTokens.value } : {}),
-        ...(reasoningEfforts.length ? { reasoning_efforts: reasoningEfforts } : {}),
-        ...(productOwned ? { origin: "product" as const } : {}),
-      };
-      return next;
-    });
-    if (modelDraft === providerModelEditor.originalId) setModelDraft(nextId);
-    if (!providerModelEditor.enabled && modelDraft === providerModelEditor.originalId) {
-      const fallback = providerModelsDraft.find((model) => model !== providerModelEditor.originalId && (providerModelConfigsDraft[model]?.enabled ?? true));
-      setModelDraft(fallback ?? "");
+    const id = editor.modelId.trim();
+    return { id, models: replaceDirectModel(modelConfigsForSave(), editor.originalId, id, config) };
+  }
+
+  function saveProviderModelEditor(): boolean {
+    try {
+      const snapshot = currentModelSnapshot();
+      setProviderModelsDraft(Object.keys(snapshot.models));
+      // Preserve read-only origin in local state; it is stripped only at the API boundary.
+      setProviderModelConfigsDraft(Object.fromEntries(Object.entries(snapshot.models).map(([id, config]) => [id, { ...config, ...(providerModelConfigsDraft[id]?.origin ? { origin: providerModelConfigsDraft[id].origin } : {}) }])));
+      setProviderModelAliasesDraft(Object.fromEntries(Object.entries(snapshot.models).flatMap(([id, config]) => config.alias ? [[id, config.alias]] : [])));
+      setProviderModelOperationsDraft(Object.fromEntries(Object.entries(snapshot.models).map(([id, config]) => [id, config.capabilities.filter((capability) => capability === "image_generation" || capability === "image_edit")])));
+      setProviderModelEditorError(null);
+      return true;
+    } catch (error) {
+      setProviderModelEditorError(error instanceof Error ? error.message : String(error));
+      return false;
     }
-    setProviderModelEditor(null);
+  }
+
+  function switchDirectModel(model: string): void {
+    if (providerModelEditorDirty && !saveProviderModelEditor()) return;
+    setModelDraft(model);
+    openProviderModelEditor(model);
+  }
+
+  function editAggregatedModel(entry: DirectModelEntry, copy = false, enabled = entry.config.enabled): void {
+    const route = directModelRoute(entry);
+    setModelCenterTab("official");
+    // Provider identity remains internal: aggregate rows route directly to the
+    // owning connection while the reused model form does not expose that ID.
+    selectModelProviderTab(route.providerId);
+    const configs = providerModelConfigsFor(providerDraftModels(entry.provider, [entry.modelId]), entry.provider);
+    let id = route.modelId;
+    let config = configs[id] ?? entry.config;
+    if (copy) {
+      const base = `${id}-copy`;
+      id = base;
+      for (let suffix = 2; configs[id]; suffix += 1) id = `${base}-${suffix}`;
+      config = { ...config, origin: "user", input_modalities: [...config.input_modalities], output_modalities: [...config.output_modalities], capabilities: [...config.capabilities] };
+    }
+    const baseline: ProviderModelEditorDraft = {
+      originalId: id, modelId: id, alias: config.alias ?? "",
+      inputModalities: [...config.input_modalities], outputModalities: [...config.output_modalities],
+      apiProtocol: config.api_protocol, enabled: config.enabled, capabilities: [...config.capabilities],
+      tokenLimit: config.token_limit !== undefined && config.max_tokens !== undefined ? String(config.token_limit - config.max_tokens) : "",
+      maxTokens: config.max_tokens !== undefined ? String(config.max_tokens) : "",
+      reasoningEfforts: PROVIDER_REASONING_EFFORT_OPTIONS.filter((effort) => (config.reasoning_efforts ?? []).includes(effort)),
+      origin: copy ? "user" : config.origin ?? null,
+    };
+    const editor = { ...baseline, enabled };
+    configs[id] = { ...config, enabled };
+    setProviderModelsDraft(Object.keys(configs));
+    setProviderModelConfigsDraft(configs);
+    setModelDraft(id);
+    setProviderModelEditor(editor);
+    setProviderModelEditorBaseline(copy ? "" : JSON.stringify(baseline));
     setProviderModelEditorError(null);
+    if (copy) setModelConfigMessage(zh ? "副本已加入当前连接草稿；保存后才会生效。" : "Copy added to the current connection draft; save to apply it.");
+  }
+
+  function toggleAggregatedModel(entry: DirectModelEntry): void {
+    editAggregatedModel(entry, false, !entry.config.enabled);
+    setModelConfigMessage(zh ? "启用状态已进入草稿，请保存。" : "Enabled state changed in the draft; save to apply.");
+  }
+  function setDirectModelType(image: boolean): void {
+    setProviderModelEditor((current) => current ? { ...current,
+      capabilities: image ? ["image_generation"] : ["chat"],
+      inputModalities: ["text"], outputModalities: image ? ["image"] : ["text"], reasoningEfforts: [],
+    } : current);
   }
 
   function toggleProviderModelEditorModality(direction: "input" | "output", modality: MyDrSaiModelModality, enabled: boolean): void {
@@ -1375,14 +1562,10 @@ export function SettingsPanel({
       });
       setDiscoveredModels(result.models);
       if (result.ok && result.models.length) {
-        setProviderModelsDraft(result.models);
-        setProviderModelAliasesDraft((current) => Object.fromEntries(Object.entries(current).filter(([model]) => result.models.includes(model))));
-        setProviderModelOperationsDraft((current) => Object.fromEntries(Object.entries(current).filter(([model]) => result.models.includes(model))));
-        setProviderModelConfigsDraft((current) => Object.fromEntries(result.models.map((model) => [model, current[model] ?? providerModelConfigFor(model, { wire_api: wireApiDraft })])));
-        setNewProviderModelDraft(null);
-        if (!result.models.includes(modelDraft.trim())) setModelDraft(result.models[0]);
+        setProviderModelsDraft((current) => [...new Set([...current, ...result.models])]);
+        setProviderModelConfigsDraft((current) => ({ ...Object.fromEntries(result.models.map((model) => [model, providerModelConfigFor(model, { wire_api: wireApiDraft })])), ...current }));
       }
-      setModelConfigMessage(result.ok ? `${result.models.length} ${zh ? "个模型可用" : "models discovered"}` : `${zh ? "模型发现失败，可继续手工输入" : "Discovery failed; manual model entry remains available"}: ${result.error || "unknown"}`);
+      setModelConfigMessage(result.ok ? `${result.models.length} ${zh ? "个模型已发现；列表已加入草稿，尚未保存或验证调用" : "models discovered; added to draft, not saved or call-tested"}` : `${zh ? "模型发现失败，可继续手工输入" : "Discovery failed; manual model entry remains available"}: ${result.error || "unknown"}`);
     } catch (error) { setModelConfigMessage(userFacingFailureMessage(error, language, "connection")); }
     finally { setModelConfigBusy(false); }
   }
@@ -1427,7 +1610,10 @@ export function SettingsPanel({
       const connection = await desktopApi.restoreMyDrSaiModelConnection(myDrSaiConfig?.modelConnection?.revision);
       onModelConnectionUpdated(connection);
       setModelDoctorResult(null);
-      setModelConfigMessage(zh ? "已恢复最后一次可用的模型配置。" : "Restored the last-known-good model configuration.");
+      setLastModelTestDraftFingerprint(null);
+      setModelTestOutput(null);
+      setModelCapabilityResults({});
+      setModelConfigMessage(zh ? "已恢复最后一次可用的运行配置；当前编辑草稿已保留，不代表草稿已保存或通过测试。" : "Restored the last-known-good runtime configuration. Your editor draft is retained, not saved or verified by this recovery.");
     } catch (error) {
       const message = userFacingFailureMessage(error, language, "connection");
       setModelConfigConflict(normalizeRuntimeErrorEnvelope(error).code === "config_conflict");
@@ -1435,11 +1621,46 @@ export function SettingsPanel({
     } finally { setModelConfigBusy(false); }
   }
 
-  async function saveModelProvider(): Promise<void> {
-    setModelConfigBusy(true); setModelConfigMessage(null); setModelConfigConflict(false);
+  function modelProviderSetupIssue(requireModels = true): string | null {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(providerDraft.trim())) return zh ? "请在高级连接设置中填写提供方名称。" : "Enter a provider name in advanced connection settings.";
+    try {
+      const url = new URL(baseUrlDraft.trim());
+      if (!["http:", "https:"].includes(url.protocol) || !url.hostname) throw new Error("invalid API URL");
+    } catch {
+      return zh ? "请填写完整的 http:// 或 https:// API 地址。" : "Enter a complete http:// or https:// API URL.";
+    }
+    if (!providerDiscoveryCredentialReady) return zh ? "请填写 API Key；无需密钥的服务可在高级设置中声明。" : "Enter an API key, or declare a keyless service in advanced settings.";
+    if (requireModels) {
+      try { currentModelSnapshot(); } catch (error) { return error instanceof Error ? error.message : String(error); }
+    }
+    return null;
+  }
+
+  async function saveModelProvider(testFirst = false): Promise<void> {
+    if (modelConfigBusy) return;
+    const issue = modelProviderSetupIssue();
+    if (issue) { setModelConfigMessage(issue); return; }
+    setModelConfigBusy(true); setModelConfigMessage(null); setModelConfigConflict(false); setModelTestOutput(null); setLastModelTestDraftFingerprint(null);
     try {
       const provider = providerDraft.trim();
       const usesHepAiAccount = provider === "hepai";
+      const snapshot = currentModelSnapshot();
+      const selected = snapshot.models[snapshot.id];
+      if (testFirst) {
+        if (!selected.enabled) throw new Error(zh ? "请先启用此模型。" : "Enable this model first.");
+        if (!selected.capabilities.includes("chat") || selected.capabilities.includes("image_generation")) throw new Error(zh ? "草稿测试仅支持对话，不支持图像生成。可仅保存（未验证），再在高级管理中进行可能收费的图像能力测试。" : "Draft testing supports chat only. Save without verification, then use the potentially billable image capability probe in advanced management.");
+        const protocol = selected.api_protocol;
+        const host = protocol === wireApiDraft ? baseUrlDraft.trim() : protocol === "anthropic" ? anthropicBaseUrlDraft.trim() : protocol === "gemini" ? geminiBaseUrlDraft.trim() : "";
+        const url = new URL(host);
+        if (!["http:", "https:"].includes(url.protocol)) throw new Error("Invalid protocol API URL");
+        const result = await desktopApi.testMyDrSaiModelDraft({
+          model: selected.upstream_id || snapshot.id, model_provider: provider, base_url: host,
+          ...(!usesHepAiAccount && apiKeyDraft.trim() ? { api_key: apiKeyDraft.trim() } : {}),
+          wire_api: protocol, requires_api_key: !usesHepAiAccount && keySourceDraft !== "none",
+        }, "model");
+        if (!result.ok) { setModelConfigMessage(`${zh ? "模型调用测试失败，未保存" : "Model call failed; not saved"}: ${result.error || "unknown"}`); return; }
+        if (result.output) setModelTestOutput(result.output);
+      }
       const connection = await desktopApi.saveMyDrSaiModelProvider(provider, {
         base_url: baseUrlDraft.trim(),
         ...(anthropicBaseUrlDraft.trim() ? { anthropic_base_url: anthropicBaseUrlDraft.trim() } : {}),
@@ -1447,21 +1668,23 @@ export function SettingsPanel({
         ...(!usesHepAiAccount && apiKeyDraft.trim() ? { api_key: apiKeyDraft.trim() } : {}),
         wire_api: wireApiDraft,
         requires_api_key: !usesHepAiAccount && keySourceDraft !== "none",
-        models: modelConfigsForSave(),
+        models: snapshot.models,
         ...(myDrSaiConfig?.modelConnection?.revision ? { expected_revision: myDrSaiConfig.modelConnection.revision } : {}),
       });
-      providerTabAfterProviderSaveRef.current = provider;
       onModelConnectionUpdated(connection);
-      setActiveModelProviderTab(provider);
+      selectModelProviderTab(provider, connection);
+      setModelDraft(snapshot.id);
+      setProviderModelEditor(null);
       if (!["hepai", "deepseek", "openai", "anthropic"].includes(provider)) setRecentOverflowModelProviderTab(provider);
       setApiKeyDraft("");
-      setModelConfigMessage(apiKeyDraft.trim() || connection.providers?.some((item) => item.name === provider && item.has_api_key)
-        ? (zh ? "模型提供方和 API 密钥已安全保存。" : "Model provider and API key saved securely.")
-        : (zh ? "模型提供方已保存。" : "Model provider saved."));
+      setModelTestConfirmationOpen(false);
+      setModelConfigMessage(testFirst
+        ? (zh ? "当前模型调用测试通过并已保存；其他模型及工具/多模态能力未经本次测试验证，未切换主模型。" : "Selected model call passed and saved. Other models and tool/multimodal capabilities were not tested; primary model unchanged.")
+        : (zh ? "已保存；尚未验证模型调用，未切换主模型。" : "Saved without model-call verification; primary model unchanged."));
     } catch (error) {
       const message = userFacingFailureMessage(error, language, "connection");
       setModelConfigConflict(normalizeRuntimeErrorEnvelope(error).code === "config_conflict");
-      setModelConfigMessage(message);
+      setModelConfigMessage(`${zh ? "保存未完成：" : "Save not completed: "}${message}`);
     } finally { setModelConfigBusy(false); }
   }
 
@@ -1472,13 +1695,15 @@ export function SettingsPanel({
       if (refreshed.modelConnection) {
         onModelConnectionUpdated(refreshed.modelConnection);
         setModelConfigConflict(false);
-        setModelConfigMessage(zh ? "已重新加载最新模型服务配置，请检查后再次保存。" : "Latest model service configuration reloaded. Review it before saving again.");
+        setModelConfigMessage(zh ? "已获取最新配置版本，当前草稿已保留；请核对后再次保存。" : "Latest configuration revision loaded; your draft is retained. Review before saving again.");
       }
     } catch (error) { setModelConfigMessage(userFacingFailureMessage(error, language, "connection")); }
     finally { setModelConfigBusy(false); }
   }
 
   async function testModelConnection(mode: "basic" | "model"): Promise<void> {
+    const issue = modelProviderSetupIssue(mode === "model");
+    if (issue) { setModelConfigMessage(issue); return; }
     setModelConfigBusy(true); setModelConfigMessage(null); setModelTestOutput(null);
     try {
       const usesHepAiAccount = providerDraft.trim() === "hepai";
@@ -1492,12 +1717,13 @@ export function SettingsPanel({
       if (refreshed.modelConnection) onModelConnectionUpdated(refreshed.modelConnection);
       const localizedGuidance = result.guidance?.localizations?.[zh ? "zh" : "en"];
       if (mode === "model" && result.output) setModelTestOutput(result.output);
+      setLastModelTestDraftFingerprint(modelDraftFingerprint);
       setModelConfigMessage(result.ok
         ? mode === "model"
           ? testingSavedModel
-            ? (zh ? "模型调用成功，当前运行配置已验证。" : "Model call succeeded and the active configuration is verified.")
-            : (zh ? "草稿模型调用成功；保存后才会更新当前运行状态。" : "Draft model call succeeded; save it before the active status changes.")
-          : (zh ? "连接成功。" : "Connection succeeded.")
+            ? (zh ? "所选已保存模型调用测试通过；未切换主模型。" : "The selected saved model call passed; the primary model is unchanged.")
+            : (zh ? "当前草稿模型调用测试通过；草稿尚未保存，未切换主模型。" : "This draft model call passed; the draft is not saved and the primary model is unchanged.")
+          : (zh ? "基础连接检查通过；不代表模型调用测试通过。" : "Basic connection check passed; model calls are not verified.")
         : `${localizedGuidance?.title || result.guidance?.title || (zh ? "连接测试失败" : "Connection test failed")}: ${localizedGuidance?.actions?.join(" / ") || result.guidance?.actions?.join(" / ") || result.error || "unknown"}`);
       if (mode === "model") setModelTestConfirmationOpen(false);
     }
@@ -1506,6 +1732,7 @@ export function SettingsPanel({
   }
 
   async function probeProviderModelCapability(model: string, operation: import("@shared/desktopApi").ModelCapabilityProbeOperation): Promise<void> {
+    if (modelProviderDirty || modelConfigBusy || runningModelCapability) return;
     const confirmed = await requestAppDecision({
       id: `probe-model-capability-${model}-${operation}`,
       title: zh ? `测试模型“${model}”的 ${operation} 能力？` : `Test ${operation} on “${model}”?`,
@@ -1513,10 +1740,10 @@ export function SettingsPanel({
         ? "这会向模型提供方发送一次最小能力测试请求。"
         : "This sends one minimal capability probe to the model provider.",
       impact: zh ? "服务商可能收取少量费用。" : "The provider may charge a small fee.",
-      confirmLabel: zh ? "确认并测试" : "Confirm and test",
+      confirmLabel: zh ? "确认测试并保存" : "Confirm test and save",
     });
     if (!confirmed) return;
-    const key = `${model}:${operation}`;
+    const key = `${providerDraft.trim()}:${model}:${operation}`;
     setRunningModelCapability(key);
     try {
       const result = await desktopApi.probeMyDrSaiProviderModel(providerDraft.trim(), { model, operation });
@@ -1539,30 +1766,11 @@ export function SettingsPanel({
     } finally { setModelConfigBusy(false); }
   }
 
-  async function deleteModelProvider(deleteCredential: boolean): Promise<void> {
-    const provider = providerPendingDeletion;
-    if (!provider || provider === "hepai") return;
-    if (!providerDeletePreflight?.can_delete) return;
-    setModelConfigBusy(true); setModelConfigMessage(null);
-    try {
-      const result = await desktopApi.deleteMyDrSaiModelProvider(provider, deleteCredential);
-      const next = await desktopApi.getMyDrSaiConfig();
-      if (next.modelConnection) onModelConnectionUpdated(next.modelConnection);
-      if (recentOverflowModelProviderTab === provider) setRecentOverflowModelProviderTab(null);
-      setProviderPendingDeletion(null);
-      setProviderDeletePreflight(null);
-      const active = result.active || next.modelConnection?.model_provider;
-      const activeMessage = active === "hepai"
-        ? (zh ? "当前连接已切换为 HepAI。" : "HepAI is now active.")
-        : (zh ? `当前连接仍为 ${active || "原 Provider"}。` : `The active connection remains ${active || "the previous Provider"}.`);
-      setModelConfigMessage(deleteCredential
-        ? (zh ? `Provider“${provider}”及其安全凭据已删除。${activeMessage}` : `Provider “${provider}” and its secure credential were deleted. ${activeMessage}`)
-        : (zh ? `Provider“${provider}”已删除，安全凭据已保留。${activeMessage}` : `Provider “${provider}” was deleted and its secure credential was retained. ${activeMessage}`));
-    }
-    catch (error) { setModelConfigMessage(userFacingFailureMessage(error, language, "connection")); }
-    finally { setModelConfigBusy(false); }
+  async function deleteModelProvider(_deleteCredential: boolean): Promise<void> {
+    // Phase one deliberately has no destructive provider path. Reference checks
+    // are not authoritative yet, so even a positive preflight must not issue DELETE.
+    setModelConfigMessage(zh ? "待引用检查：本阶段不能删除已保存连接。" : "Pending reference checks: saved connections cannot be deleted in this phase.");
   }
-
   async function openDataCleanup(scope: DesktopDataCleanupScope): Promise<void> {
     setCleanupBusy(true);
     setCleanupStatus(null);
@@ -1900,7 +2108,7 @@ export function SettingsPanel({
   // (online) reading cannot run here; see
   // WINDOWS_PLATFORM_DESCRIPTOR.features.remoteSpeechSynthesis.  Windows system
   // speech stays available, so only the online paths are disabled.
-  const remoteSynthesisAvailable = featureCapabilities?.remoteSpeechSynthesis !== false;
+  const remoteSynthesisAvailable = featureCapabilities?.remoteSpeechSynthesis === true;
   const onlineSynthesisUnavailableReason = zh
     ? "此桌面运行时未提供在线朗读接口（POST /v1/audio/speech 返回 404），当前只能使用 Windows 本地朗读。"
     : "This desktop runtime does not expose online speech synthesis (POST /v1/audio/speech returns 404); only Windows system speech is available.";
@@ -1941,6 +2149,8 @@ export function SettingsPanel({
       setDuplexVoiceReadinessBusy(false);
     }
   }, [zh]);
+  const serialSttBlock = describeSerialSttBlock(voiceRuntimeStatus, zh);
+  const serialSttStatusMessage = getSerialSttStatusMessage(voiceRuntimeStatus, zh);
   useEffect(() => {
     if (activePane === "voice") void refreshDuplexVoiceReadiness();
   }, [activePane, refreshDuplexVoiceReadiness]);
@@ -2000,7 +2210,6 @@ export function SettingsPanel({
         { id: "perceptors", label: zh ? "感知器配置" : "Perceptors", icon: Globe2 },
         { id: "executors", label: zh ? "执行器配置" : "Executors", icon: TerminalIcon },
         { id: "memories", label: zh ? "记忆器配置" : "Memories", icon: History },
-        { id: "agent-task", label: zh ? "智能体任务" : "Agent tasks", icon: Bot },
         { id: "approvals", label: zh ? "审批中心" : "Approval Center", icon: ShieldCheck },
         { id: "analytics", label: zh ? "使用分析" : "Usage analytics", icon: History },
       ],
@@ -2025,8 +2234,8 @@ export function SettingsPanel({
   const visibleGroups = groups.map((group) => ({
     ...group,
     items: group.items.filter((item) => {
-      if (item.id === "voice") return featureCapabilities?.serialVoice !== false || featureCapabilities?.streamingVoice !== false;
-      if (item.id === "agent-defaults" || item.id === "model-providers" || item.id === "perceptors" || item.id === "executors" || item.id === "memories" || item.id === "agent-task") return featureCapabilities?.agents !== false;
+      if (item.id === "voice") return featureCapabilities?.serialVoice === true || featureCapabilities?.streamingVoice === true;
+      if (item.id === "agent-defaults" || item.id === "model-providers" || item.id === "perceptors" || item.id === "executors" || item.id === "memories") return featureCapabilities?.agents !== false;
       if (item.id === "approvals") return featureCapabilities?.approvals !== false;
       if (item.id === "analytics") return featureCapabilities?.diagnostics !== false;
       if (item.id === "codex") return true;
@@ -2048,7 +2257,8 @@ export function SettingsPanel({
       return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex);
     });
   const presetModelProviderIds = new Set(presetModelProviderTabs.map((preset) => preset.id));
-  const customModelProviderTabs = modelProviderInventory
+  const customModelProviderTabs = (myDrSaiConfig?.modelConnection && !modelProviderInventory.some((provider) => provider.name === myDrSaiConfig.modelConnection!.provider.name)
+    ? [...modelProviderInventory, myDrSaiConfig.modelConnection.provider] : modelProviderInventory)
     .filter((provider) => !presetModelProviderIds.has(provider.name))
     .map((provider) => ({ id: provider.name, label: provider.name }));
   const modelProviderTabs: Array<{ id: string; label: string }> = [...presetModelProviderTabs, ...customModelProviderTabs];
@@ -2061,11 +2271,14 @@ export function SettingsPanel({
     ?? (recentOverflowModelProviderTab ? { id: recentOverflowModelProviderTab, label: recentOverflowModelProviderTab === "custom" ? (zh ? "自定义" : "Custom") : recentOverflowModelProviderTab } : null);
   const activeModelProviderTabEntry = compactModelProviderTabs.find((provider) => provider.id === activeModelProviderTab)
     ?? { id: activeModelProviderTab, label: activeModelProviderTab === "custom" ? (zh ? "自定义" : "Custom") : activeModelProviderTab };
-  const visibleModelProviderTabs = compactModelProviderTabs.filter((provider) => primaryModelProviderIds.has(provider.id));
-  const recentVisibleEntry = recentOverflowModelProviderTabEntry ?? (!primaryModelProviderIds.has(activeModelProviderTab) ? activeModelProviderTabEntry : null);
-  if (recentVisibleEntry && !visibleModelProviderTabs.some((provider) => provider.id === recentVisibleEntry.id)) visibleModelProviderTabs.push(recentVisibleEntry);
-  const visibleModelProviderIds = new Set(visibleModelProviderTabs.map((provider) => provider.id));
-  const overflowModelProviderTabs = compactModelProviderTabs.filter((provider) => !primaryModelProviderIds.has(provider.id) && !visibleModelProviderIds.has(provider.id));
+  const modelProviderTabLayout = computeModelProviderTabLayout({
+    tabs: compactModelProviderTabs,
+    primaryIds: primaryModelProviderIds,
+    draftTabId: "__new-custom-provider__",
+    pinned: [recentOverflowModelProviderTabEntry, activeModelProviderTabEntry],
+  });
+  const visibleModelProviderTabs = [{ id: "__new-custom-provider__", label: zh ? "自定义接入" : "Custom connection" }, ...modelProviderTabLayout.visible];
+  const overflowModelProviderTabs = modelProviderTabLayout.overflow;
   const activeModelProviderPreset = effectiveModelProviderPresets.find((preset) => preset.id === activeModelProviderTab);
   const providersWithConfiguredKeys = new Set(modelProviderInventory.filter((provider) => provider.has_api_key).map((provider) => provider.name));
   if (myDrSaiConfig?.modelConnection?.provider.has_api_key) providersWithConfiguredKeys.add(myDrSaiConfig.modelConnection.provider.name);
@@ -2086,23 +2299,35 @@ export function SettingsPanel({
   const providerOperationsChanged = JSON.stringify(savedProviderModelOperations) !== JSON.stringify(providerModelOperationsDraft);
   const savedProviderModelConfigs = Object.fromEntries(Object.entries(selectedProviderConfig?.model_configs ?? providerModelConfigsFor(savedProviderModels, selectedProviderConfig)).map(([model, config]) => [model, providerModelConfigForWrite(config)]));
   const providerModelConfigsChanged = JSON.stringify(savedProviderModelConfigs) !== JSON.stringify(modelConfigsForSave());
-  const modelProviderDirty = !selectedProviderConfig
+  const modelProviderDirty = providerModelEditorDirty || !selectedProviderConfig
     || providerDraft.trim() !== selectedProviderConfig.name
     || baseUrlDraft.trim() !== selectedProviderConfig.base_url
     || anthropicBaseUrlDraft.trim() !== (selectedProviderConfig.anthropic_base_url ?? "")
     || geminiBaseUrlDraft.trim() !== (selectedProviderConfig.google_base_url ?? "")
     || wireApiDraft !== selectedProviderConfig.wire_api
+    || (keySourceDraft !== "none" && providerDraft.trim() !== "hepai") !== selectedProviderConfig.requires_api_key
     || Boolean(apiKeyDraft.trim())
     || providerModelsChanged
     || providerAliasesChanged
     || providerOperationsChanged
     || providerModelConfigsChanged;
+  // Test feedback belongs to exactly the draft that was tested, never its edits.
+  const modelDraftFingerprint = JSON.stringify([providerDraft, baseUrlDraft, anthropicBaseUrlDraft, geminiBaseUrlDraft, apiKeyDraft, keySourceDraft, wireApiDraft, modelDraft, providerModelsDraft, providerModelConfigsDraft, providerModelAliasesDraft, providerModelOperationsDraft, newProviderModelDraft, providerModelEditor]);
+  useEffect(() => {
+    if (lastModelTestDraftFingerprint !== null && lastModelTestDraftFingerprint !== modelDraftFingerprint) {
+      setLastModelTestDraftFingerprint(null);
+      setModelConfigMessage(null);
+      setModelTestOutput(null);
+    }
+  }, [modelDraftFingerprint, lastModelTestDraftFingerprint]);
+  useEffect(() => { setModelCapabilityResults({}); }, [modelDraftFingerprint]);
   const hepAiAccountName = user?.name?.trim() || user?.email?.trim() || (zh ? "当前账号" : "current account");
   const usesOidcProviderAuth = activeModelProviderPreset?.auth_mode === "oidc" || providerDraft === "hepai";
   const providerDiscoveryCredentialReady = usesOidcProviderAuth
     || keySourceDraft === "none"
     || Boolean(apiKeyDraft.trim())
     || selectedProviderHasSavedKey;
+  const providerSetupIssue = modelProviderSetupIssue();
   const activeAndroidAssociations = mobileAssociations.filter((item) => item.status === "active");
   const androidOnlineDeviceCount = new Set(
     activeAndroidAssociations
@@ -2205,47 +2430,184 @@ export function SettingsPanel({
             <header className="settings-content-header">
               <h2>{activePane === "model-providers" ? (zh ? "模型提供方" : "Model providers") : (zh ? "常规" : "General")}</h2>
               <p>{activePane === "model-providers"
-                ? (zh ? "管理智能体可使用的模型来源、连接凭据和服务协议。" : "Manage the model sources, credentials, and service protocols available to Agents.")
+                ? (zh ? "接入第三方模型：填写 API 地址、API Key 和模型 ID，保存后可手动测试。" : "Connect a third-party model: enter its API URL, API key, and model ID. Save, then test manually.")
                 : (zh ? "管理账户和桌面端的基础偏好。" : "Manage your account and desktop preferences.")}</p>
             </header>
             {activePane === "model-providers" && (
               <>
+            <div className="model-provider-tabs" role="tablist" aria-label={zh ? "模型中心" : "Model center"}>
+              <button type="button" role="tab" aria-selected={modelCenterTab === "mine"} className={modelCenterTab === "mine" ? "active" : ""} onClick={() => setModelCenterTab("mine")}>{zh ? "我的模型" : "My models"}</button>
+              <button type="button" role="tab" aria-selected={modelCenterTab === "official"} className={modelCenterTab === "official" ? "active" : ""} onClick={() => setModelCenterTab("official")}>{zh ? "官方服务" : "Official services"}</button>
+            </div>
+            {modelCenterTab === "mine" ? <section className="settings-section model-provider-settings model-center-mine" data-testid="my-models-center">
+              <header className="model-center-heading">
+                <div><h2>{zh ? "我的模型" : "My models"}</h2><p>{zh ? "管理已接入的模型与运行状态。" : "Manage connected models and runtime status."}</p></div>
+                <button type="button" className="model-provider-button-primary" onClick={() => { setModelCenterTab("official"); void navigateModelProvider("__new-custom-provider__"); }}>{zh ? "添加模型" : "Add model"}</button>
+              </header>
+              <div className="model-center-card-list">
+                {directModels.length === 0 ? <div className="model-center-empty"><PackageOpen size={28} /><strong>{zh ? "还没有模型" : "No models yet"}</strong><span>{zh ? "添加模型后，可在这里统一管理。" : "Add a model to manage it here."}</span></div> : directModels.map((entry) => {
+                  const runtimeStatus = modelCenterRuntimeStatus(entry.runtime?.availability ?? "configured_unverified", zh);
+                  const connection = modelCenterConnection(entry.provider.base_url);
+                  const inputBudget = Math.max(0, (entry.config.token_limit ?? 0) - (entry.config.max_tokens ?? 0));
+                  const modelType = entry.config.capabilities.includes("image_generation") ? (zh ? "图像" : "Image") : (zh ? "对话" : "Chat");
+                  const modalities = `${entry.config.input_modalities.map((item) => modelCenterModalityLabel(item, zh)).join("+")} → ${entry.config.output_modalities.map((item) => modelCenterModalityLabel(item, zh)).join("+")}`;
+                  return <article className="model-center-card" key={entry.key} data-testid={`my-model-${entry.providerId}-${entry.modelId}`}>
+                    <header className="model-center-card-header">
+                      <div className="model-center-identity"><strong title={entry.config.alias || entry.modelId}>{entry.config.alias || entry.modelId}</strong><code title={entry.modelId}>{entry.modelId}</code></div>
+                      <div className="model-center-badges"><span>{modelType}</span><span className={entry.config.enabled ? "is-enabled" : "is-disabled"}>{entry.config.enabled ? (zh ? "已启用" : "Enabled") : (zh ? "已停用" : "Disabled")}</span><span className={`is-${runtimeStatus.tone}`} title={zh ? "运行时状态" : "Runtime status"}>{runtimeStatus.label}</span></div>
+                    </header>
+                    <div className="model-center-connection"><span>{zh ? "连接" : "Connection"}</span><strong title={connection.title}>{connection.host}</strong><code>{entry.config.api_protocol}</code></div>
+                    <div className="model-center-chips">
+                      <span>{zh ? "最大输入" : "Max input"} <b>{inputBudget.toLocaleString()}</b></span>
+                      <span>{zh ? "最大输出" : "Max output"} <b>{(entry.config.max_tokens ?? 0).toLocaleString()}</b></span>
+                      <span>{modalities}</span>
+                      <span>{entry.config.capabilities.includes("tool_calling") ? (zh ? "工具调用" : "Tool calling") : (zh ? "无工具调用" : "No tool calling")}</span>
+                    </div>
+                    {entry.agentEligibilityReason && <p className="model-center-agent-warning">{zh ? "不能用于 Agent：" : "Cannot be used for Agent: "}{modelCenterAgentReason(entry.agentEligibilityReason, zh)}</p>}
+                    <footer className="model-center-actions">
+                      <button type="button" onClick={() => editAggregatedModel(entry)}><Pencil size={14} />{zh ? "编辑" : "Edit"}</button>
+                      <button type="button" onClick={() => editAggregatedModel(entry, true)}><Copy size={14} />{zh ? "复制" : "Copy"}</button>
+                      <button type="button" disabled={!entry.config.enabled} title={!entry.config.enabled ? (zh ? "请先启用模型" : "Enable the model first") : undefined} onClick={() => { editAggregatedModel(entry); setModelConfigMessage(zh ? "请先保存草稿，再使用测试入口；测试不会自动发生。" : "Save the draft first, then use Test. No test has run yet."); }}>{zh ? "测试" : "Test"}</button>
+                      <button type="button" onClick={() => toggleAggregatedModel(entry)}>{entry.config.enabled ? (zh ? "禁用" : "Disable") : (zh ? "启用" : "Enable")}</button>
+                      <button type="button" className="model-provider-button-danger" disabled={modelConfigBusy} onClick={() => void deleteSavedProviderModel(entry.modelId, entry.providerId)}><Trash2 size={14} />{zh ? "删除" : "Delete"}</button>
+                    </footer>
+                  </article>;
+                })}
+              </div>
+            </section> : <>
             <div className="model-provider-tabs" aria-label={zh ? "模型提供方" : "Model providers"}>
               <div className="model-provider-tablist" role="tablist">
                 {visibleModelProviderTabs.map((provider) => (
-                  <button key={provider.id} type="button" role="tab" aria-selected={activeModelProviderTab === provider.id} className={activeModelProviderTab === provider.id ? "active" : ""} onClick={() => selectModelProviderTab(provider.id)}><ModelProviderLogo provider={provider.id} /><span>{provider.label}</span>{providersWithConfiguredKeys.has(provider.id) && <i className="model-provider-configured-dot" title={zh ? "API 密钥已配置" : "API key configured"} aria-label={zh ? "API 密钥已配置" : "API key configured"} />}</button>
+                  <button key={provider.id} type="button" role="tab" aria-selected={activeModelProviderTab === provider.id} className={activeModelProviderTab === provider.id ? "active" : ""} onClick={() => void navigateModelProvider(provider.id)}><ModelProviderLogo provider={provider.id} /><span>{provider.label}</span>{providersWithConfiguredKeys.has(provider.id) && <i className="model-provider-configured-dot" title={zh ? "API 密钥已配置" : "API key configured"} aria-label={zh ? "API 密钥已配置" : "API key configured"} />}</button>
                 ))}
               </div>
               {overflowModelProviderTabs.length > 0 && <details className="model-provider-overflow">
-                <summary>{zh ? "更多" : "More"}<span aria-hidden="true">⌄</span></summary>
+                <summary>{zh ? "更多 / 已保存" : "More / Saved"}<span aria-hidden="true">⌄</span></summary>
                 <div className="model-provider-overflow-menu" role="menu">
                   {overflowModelProviderTabs.map((provider) => (
-                    <button key={provider.id} type="button" role="menuitemradio" aria-checked={activeModelProviderTab === provider.id} className={activeModelProviderTab === provider.id ? "selected" : ""} onClick={(event) => { selectModelProviderTab(provider.id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><ModelProviderLogo provider={provider.id} /><span>{provider.label}</span>{providersWithConfiguredKeys.has(provider.id) && <i className="model-provider-configured-dot" title={zh ? "API 密钥已配置" : "API key configured"} aria-label={zh ? "API 密钥已配置" : "API key configured"} />}{activeModelProviderTab === provider.id && <b aria-hidden="true">✓</b>}</button>
+                    <button key={provider.id} type="button" role="menuitemradio" aria-checked={activeModelProviderTab === provider.id} className={activeModelProviderTab === provider.id ? "selected" : ""} onClick={(event) => { void navigateModelProvider(provider.id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><ModelProviderLogo provider={provider.id} /><span>{provider.label}</span>{providersWithConfiguredKeys.has(provider.id) && <i className="model-provider-configured-dot" title={zh ? "API 密钥已配置" : "API key configured"} aria-label={zh ? "API 密钥已配置" : "API key configured"} />}{activeModelProviderTab === provider.id && <b aria-hidden="true">✓</b>}</button>
                   ))}
                 </div>
               </details>}
-              <button type="button" className="model-provider-add-tab" aria-label={zh ? "添加模型提供方" : "Add model provider"} title={zh ? "添加模型提供方" : "Add model provider"} onClick={addCustomModelProvider}>＋</button>
+              <button type="button" className="model-provider-add-tab" aria-label={zh ? "添加模型提供方" : "Add model provider"} title={zh ? "添加模型提供方" : "Add model provider"} onClick={() => void navigateModelProvider("__new-custom-provider__")}>＋</button>
             </div>
             <section className="settings-section model-provider-settings" data-testid="model-provider-settings">
-              <div><h2>{activeModelProviderPreset ? modelProviderDisplayLabel(activeModelProviderPreset, zh) : (zh ? "自定义提供方" : "Custom provider")}<span className={`model-provider-configuration-indicator ${selectedProviderConfigured ? "configured" : "unconfigured"}`} data-testid="model-provider-configuration-indicator">{selectedProviderConfigured ? (zh ? "已配置" : "Configured") : (zh ? "未配置" : "Not configured")}</span>{selectedProviderConfigured && modelProviderDirty && <span className="model-provider-dirty-indicator" data-testid="model-provider-dirty-indicator">{zh ? "有未保存更改" : "Unsaved changes"}</span>}</h2><p>{usesOidcProviderAuth ? (zh ? "HepAI 使用当前已登录账号的 access token 获取模型并调用服务，不使用 API Key。" : "HepAI uses the current signed-in account access token for model discovery and calls; no API key is used.") : (zh ? "预设信息可编辑；保存后写入 ~/.drsai/config.toml。API Key 不会返回到界面。" : "Preset values are editable and saved to ~/.drsai/config.toml. API keys are never returned to the UI.")}</p></div>
+              <fieldset className="model-provider-form" disabled={modelConfigBusy || runningModelCapability !== null}>
+              <div><h2>{activeModelProviderPreset ? modelProviderDisplayLabel(activeModelProviderPreset, zh) : (zh ? "自定义提供方" : "Custom provider")}<span className={`model-provider-configuration-indicator ${selectedProviderConfigured ? "configured" : "unconfigured"}`} data-testid="model-provider-configuration-indicator">{selectedProviderConfigured ? (zh ? "已保存（不代表测试通过）" : "Saved (not proof of a test pass)") : (zh ? "未保存草稿" : "Unsaved draft")}</span>{selectedProviderConfigured && modelProviderDirty && <span className="model-provider-dirty-indicator" data-testid="model-provider-dirty-indicator">{zh ? "有未保存更改" : "Unsaved changes"}</span>}</h2><p>{usesOidcProviderAuth ? (zh ? "HepAI 使用当前已登录账号的 access token 获取模型并调用服务，不使用 API Key。" : "HepAI uses the current signed-in account access token for model discovery and calls; no API key is used.") : (zh ? "直接填写模型信息，然后测试并保存。" : "Enter model details, then test and save.")}</p></div>
               {myDrSaiConfig?.modelConnection?.model_provider === activeModelProviderTab && <div className="model-provider-status-card" data-testid="model-provider-status-card">
-                <strong>{myDrSaiConfig.modelConnection.model} · {myDrSaiConfig.modelConnection.model_provider}</strong>
+                <strong>{zh ? "当前运行配置：" : "Active runtime configuration: "}{myDrSaiConfig.modelConnection.model} · {myDrSaiConfig.modelConnection.model_provider}</strong>
                 <span>{zh ? "API 主机：" : "API host: "}{myDrSaiConfig.modelConnection.provider.base_url}</span>
                 {activeModelProviderStatusSummary && <span className="model-provider-status-summary">{activeModelProviderStatusSummary}</span>}
               </div>}
-              <div className="model-provider-grid">
-                <label><span>{zh ? "提供方名称" : "Provider name"}</span><input data-testid="model-provider-name" value={providerDraft} readOnly={usesOidcProviderAuth} onChange={(event) => setProviderDraft(event.target.value)} placeholder="custom" /></label>
+              <div className="model-provider-grid model-provider-basic">
+                  <label><span>{zh ? "API 地址（必填）" : "API URL (required)"}</span><input data-testid="model-provider-api-host" aria-required="true" value={baseUrlDraft} readOnly={usesOidcProviderAuth} onChange={(event) => setBaseUrlDraft(event.target.value)} placeholder="https://api.example.com/v1" /><small className="model-provider-key-hint">{zh ? "填写服务商的 API 基础地址（不是官网或聊天页面）；是否带 /v1 请按服务商文档。" : "Use the API base URL, not a website or chat page. Follow provider documentation for /v1."}</small></label>
                 {usesOidcProviderAuth ? <>
-                  <div className="model-provider-account-auth model-provider-wide" data-testid="model-provider-account-auth"><span>{zh ? "身份验证" : "Authentication"}</span><strong>{zh ? `已登录账号（${hepAiAccountName}）` : `Signed-in account (${hepAiAccountName})`}</strong><small>{zh ? "获取模型、检查连接和模型调用均使用当前登录会话的 access token。" : "Model discovery, connection checks, and model calls all use the current session access token."}</small></div>
+                  <div className="model-provider-account-auth model-provider-wide" data-testid="model-provider-account-auth"><span>{zh ? "账号验证" : "Account authentication"}</span><strong>{zh ? `已登录账号（${hepAiAccountName}）` : `Signed-in account (${hepAiAccountName})`}</strong><small>{zh ? "获取模型、检查连接和模型调用均使用当前登录会话的 access token。" : "Model discovery, connection checks, and model calls all use the current session access token."}</small></div>
                 </> : <>
-                  <label><span className="model-provider-field-label"><span>{zh ? "API 密钥" : "API key"}</span>{selectedProviderHasSavedKey && <em data-testid="model-provider-key-configured"><ShieldCheck size={13} />{zh ? "已安全保存" : "Saved securely"}</em>}</span><input data-testid="model-provider-api-key" type="password" disabled={keySourceDraft === "none"} value={apiKeyDraft} onChange={(event) => { setKeySourceDraft("secure"); setApiKeyDraft(event.target.value); }} placeholder={keySourceDraft === "none" ? (zh ? "无需 API Key" : "No API key required") : selectedProviderHasSavedKey ? (zh ? "已配置；留空表示不修改" : "Configured; leave blank to keep") : "sk-..."} /></label>
+                  <label><span className="model-provider-field-label"><span>{zh ? `API Key${keySourceDraft !== "none" && !selectedProviderHasSavedKey ? "（必填）" : "（可留空）"}` : `API key${keySourceDraft !== "none" && !selectedProviderHasSavedKey ? " (required)" : " (optional)"}`}</span>{selectedProviderHasSavedKey && <em data-testid="model-provider-key-configured"><ShieldCheck size={13} />{zh ? "已安全保存" : "Saved securely"}</em>}</span><input data-testid="model-provider-api-key" aria-required={keySourceDraft !== "none" && !selectedProviderHasSavedKey} type="password" value={apiKeyDraft} onChange={(event) => { setKeySourceDraft("secure"); setApiKeyDraft(event.target.value); }} placeholder={selectedProviderHasSavedKey ? (zh ? "已配置；留空表示不修改" : "Configured; leave blank to keep") : "sk-..."} /><small className="model-provider-key-hint" data-testid="model-provider-key-hint">{keySourceDraft === "none" && !selectedProviderHasSavedKey ? (zh ? "当前预设声明无需 API Key；如该服务需要密钥，直接在此填入即会自动启用。" : "This preset declares no API key. If the service needs one, type it here and it is enabled automatically.") : (zh ? "第三方服务通常需要 API Key。已保存的密钥不会回显；留空保留原密钥，填写新值后保存才会替换。" : "Saved keys are never displayed. Leave blank to keep the existing key; enter a new value and save to replace it.")}</small></label>
                 </>}
               </div>
-              <section className="model-provider-endpoints" data-testid="model-provider-endpoints">
+              <div className="model-provider-models" data-testid="model-provider-models">
+                {selectedProviderConfig?.user_models_error && <p className="model-provider-hint model-provider-hint-warning" data-testid="model-provider-user-models-error">{zh ? `你的模型文件无法读取，本次仅内置模型生效。请修复或删除该文件后重试：${selectedProviderConfig.user_models_error}` : `Your model file could not be read, so only the built-in models are active. Fix or delete it and try again: ${selectedProviderConfig.user_models_error}`}</p>}
+                {(selectedProviderConfig?.shadowed_models?.length ?? 0) > 0 && <p className="model-provider-hint model-provider-hint-warning" data-testid="model-provider-shadowed-models">{zh ? `这些自定义模型与内置模型重名，已改用内置定义：${(selectedProviderConfig?.shadowed_models ?? []).join("、")}。请改用新的模型 ID。` : `These custom models share a built-in ID, so the built-in definition is used: ${(selectedProviderConfig?.shadowed_models ?? []).join(", ")}. Use a new model ID instead.`}</p>}
+                {selectedProviderConfig?.origin === "product" && <p className="model-provider-hint" data-testid="model-provider-product-origin-hint">{zh ? "内置模型的名称、模态与数值由 OpenDrSai 维护并随版本更新，只能停用；如需调整请用“复制模型”生成你自己的模型。" : "Built-in model names, modalities, and numbers are maintained by OpenDrSai and update with the app, so they can only be disabled. Use “Copy model” to make an editable copy."}</p>}
+                <datalist id="discovered-model-options">{discoveredModels.map((model) => <option key={model} value={model} />)}</datalist>
+                <div className="model-provider-actions">
+                  {providerModelsDraft.length > 0 && <label>{zh ? "编辑模型" : "Edit model"}<select data-testid="model-provider-model-selection" value={providerModelEditor?.originalId ?? ""} onChange={(event) => switchDirectModel(event.target.value)}><option value="">{zh ? "新模型" : "New model"}</option>{providerModelsDraft.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>}
+                  {providerModelsDraft.length > 0 && <button type="button" onClick={() => switchDirectModel("")}>{zh ? "新建模型" : "New model"}</button>}
+                </div>
+              {providerModelEditor && (() => {
+                const modalityOptions: MyDrSaiModelModality[] = ["text", "image", "audio", "video"];
+                const protocolOptions: Array<{ id: MyDrSaiModelApiProtocol; label: string }> = [{ id: "openai", label: "OpenAI" }, { id: "anthropic", label: "Anthropic" }, { id: "gemini", label: "Gemini" }];
+                const imageModel = providerModelEditor.capabilities.includes("image_generation");
+                const capabilityOptions: MyDrSaiModelCapability[] = imageModel ? ["image_edit"] : ["tool_calling", "reasoning"];
+                // A built-in entry may only be switched on or off here: OpenDrSai
+                // regenerates its catalog file on every launch, so every other field
+                // is read-only and customisation goes through "Copy model".
+                const productModel = providerModelEditor.origin === "product";
+                return <div className="model-provider-direct-editor">
+                  <section aria-label={zh ? "模型参数" : "Model parameters"} data-testid="model-provider-model-editor">
+                    {productModel && <p className="model-provider-hint model-provider-hint-warning" data-testid="model-provider-model-editor-product-notice">{zh ? "这是内置模型：名称、模态、协议、能力与数值由 OpenDrSai 维护并随版本更新，此处只能切换启用状态。如需调整，请先“复制模型”再修改副本。" : "This is a built-in model: OpenDrSai maintains its name, modalities, protocol, capabilities, and numbers, and updates them with the app, so only the enabled state can change here. Use “Copy model” first to adjust a copy."}</p>}
+                    <div className="model-provider-model-editor-grid">
+                      <label><span>{zh ? "模型 ID" : "Model ID"}</span><input data-testid="model-provider-model-id" aria-required="true" value={providerModelEditor.modelId} maxLength={256} disabled={productModel} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, modelId: event.target.value } : current); setProviderModelEditorError(null); }} /></label>
+                      <label><span>{zh ? "模型类型" : "Model type"}</span><select data-testid="model-provider-model-type" disabled={productModel} value={imageModel ? "image" : "chat"} onChange={(event) => setDirectModelType(event.target.value === "image")}><option value="chat">{zh ? "对话模型" : "Chat model"}</option><option value="image">{zh ? "图像生成" : "Image generation"}</option></select></label>
+                      <label><span>{zh ? "别名" : "Alias"}</span><input value={providerModelEditor.alias} maxLength={256} placeholder={providerModelEditor.modelId} disabled={productModel} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, alias: event.target.value } : current)} /></label>
+                      <fieldset disabled={productModel}><legend>{zh ? "输入模态" : "Input modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.inputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("input", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
+                      <fieldset disabled={productModel}><legend>{zh ? "输出模态" : "Output modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.outputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("output", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
+                      <fieldset disabled={productModel}><legend>{zh ? "API 协议" : "API protocol"}</legend><div className="model-provider-capability-options">{protocolOptions.map((protocol) => <label key={protocol.id}><input type="radio" name="model-api-protocol" checked={providerModelEditor.apiProtocol === protocol.id} onChange={() => { if (providerModelsDraft.length <= 1) setWireApiDraft(protocol.id); setProviderModelEditor((current) => current ? { ...current, apiProtocol: protocol.id } : current); }} /><span>{protocol.label}</span></label>)}</div></fieldset>
+                      <label><span>{zh ? "最大输入预算（token，必填）" : "Max input budget (tokens, required)"}</span><input aria-required="true" inputMode="numeric" maxLength={9} value={providerModelEditor.tokenLimit} placeholder={zh ? "必填正整数" : "Required positive integer"} disabled={productModel} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, tokenLimit: event.target.value } : current); setProviderModelEditorError(null); }} /><small data-testid="model-provider-model-editor-token-limit-hint">{zh ? "预留完整输出预算后的输入额度。保存为共享上下文 = 输入预算 + 最大输出；不是后端独立输入硬上限。" : "Input budget after reserving full output. Shared context = input budget + max output; not an independent backend input cap."}</small></label>
+                      <label><span>{zh ? "最大输出（token，必填）" : "Max output (tokens, required)"}</span><input aria-required="true" inputMode="numeric" maxLength={9} value={providerModelEditor.maxTokens} placeholder={zh ? "必填正整数" : "Required positive integer"} disabled={productModel} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, maxTokens: event.target.value } : current); setProviderModelEditorError(null); }} /><small data-testid="model-provider-model-editor-max-tokens-hint">{zh ? "输入与输出合计不得超过 100000000。图像模型也须声明 token 预算；这不是图像尺寸。" : "Combined budgets must not exceed 100000000. Image token budgets are not image dimensions."}</small></label>
+                      <fieldset className="model-provider-model-editor-wide" disabled={productModel || !providerModelEditor.capabilities.includes("reasoning")}><legend>{zh ? "推理强度" : "Reasoning efforts"}</legend><div className="model-provider-capability-options">{PROVIDER_REASONING_EFFORT_OPTIONS.map((effort) => <label key={effort}><input type="checkbox" checked={providerModelEditor.reasoningEfforts.includes(effort)} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, reasoningEfforts: nextProviderReasoningEfforts(current.reasoningEfforts, effort, event.target.checked) } : current)} /><span>{effort}</span></label>)}</div><small data-testid="model-provider-model-editor-reasoning-hint">{providerModelEditor.capabilities.includes("reasoning") ? (zh ? "声明该模型可用的推理强度，用于界面取值；全部留空表示沿用内置默认值。" : "Declare the reasoning efforts this model offers so the UI can pick one. Leave all unchecked to keep the built-in default.") : (zh ? "请先勾选“能力”中的 reasoning。" : "Select the reasoning capability above first.")}</small></fieldset>
+                      <fieldset className="model-provider-model-editor-wide" disabled={productModel}><legend>{zh ? "能力" : "Capabilities"}</legend><div className="model-provider-capability-options">{capabilityOptions.map((capability) => <label key={capability}><input type="checkbox" checked={providerModelEditor.capabilities.includes(capability)} onChange={(event) => toggleProviderModelEditorCapability(capability, event.target.checked)} /><span>{capability === "tool_calling" ? (zh ? "工具调用（Agent 筛选）" : "Tool calling (Agent eligibility)") : capability}</span></label>)}</div></fieldset>
+                      <label className="model-provider-model-editor-enabled"><input type="checkbox" checked={providerModelEditor.enabled} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, enabled: event.target.checked } : current)} /><span>{zh ? "启用此模型" : "Enable this model"}</span></label>
+                    </div>
+                    {providerModelEditorError && <p className="settings-message" role="alert">{providerModelEditorError}</p>}
+                    {imageModel && <p className="model-provider-hint" role="status">{zh ? "图像在线测试可能收费。当前草稿测试接口只发起文本调用，不支持图像生成，不能据此验证图像。可仅保存（未验证），然后在高级管理中显式测试图像能力。" : "Online image tests may incur charges. Draft tests send text requests only and cannot verify image generation. Save without verification, then explicitly probe image capabilities in advanced management."}</p>}
+
+                  </section>
+                </div>;
+              })()}
+
+                <details className="model-provider-advanced" data-testid="model-provider-model-details">
+                  <summary>{zh ? `模型详情与能力（${providerModelsDraft.length}）` : `Model details and capabilities (${providerModelsDraft.length})`}</summary>
+                  <div className="model-provider-actions"><button type="button" disabled={!providerDiscoveryCredentialReady || modelConfigBusy} onClick={() => void discoverModels()}>{zh ? "获取模型列表（合并保留现有模型）" : "Fetch models (merge, keep existing)"}</button></div>
+                <div className="model-provider-model-list">
+                  <div className="model-provider-model-table-header" role="row">
+                    <span>{zh ? "模型 ID" : "Model ID"}</span>
+                    <span>{zh ? "别名" : "Alias"}</span>
+                    <span>{zh ? "输入与输出模态" : "Input and output modalities"}</span>
+                    <span>{zh ? "API 协议" : "API protocol"}</span>
+                    <span>{zh ? "操作" : "Actions"}</span>
+                  </div>
+                  {providerModelsDraft.length === 0 && newProviderModelDraft === null ? <p>{zh ? "尚未添加模型。可以手工新建，或从提供方获取。" : "No models yet. Add one manually or fetch from the provider."}</p> : orderedProviderModelEntries(providerModelsDraft, providerModelConfigsDraft, wireApiDraft, providerModelAliasesDraft, providerModelOperationsDraft).map((entry) => entry.kind === "family" ? (
+                    // A family separator must be a *direct* child of the list:
+                    // the row grid uses ``subgrid``, so any extra wrapper div
+                    // would collapse the table into one column per wrapper.
+                    <div className="model-family-group-header" key={`family:${entry.family}`} data-model-family={entry.family} role="presentation">
+                      <ModelFamilyBadge family={entry.family} zh={zh} />
+                      <span className="model-family-group-count">{entry.count}</span>
+                    </div>
+                  ) : (() => {
+                    const model = entry.model;
+                    const config = providerModelConfigsDraft[model] ?? providerModelConfigFor(model, { wire_api: wireApiDraft, model_aliases: providerModelAliasesDraft, model_operations: providerModelOperationsDraft });
+                    const probeOperations = config.capabilities.filter((capability) => ["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "speech_to_text", "text_to_speech"].includes(capability)) as import("@shared/desktopApi").ModelCapabilityProbeOperation[];
+                    const family = classifyModelFamily({
+                      alias: config.alias,
+                      model,
+                      operations: config.capabilities as unknown as readonly string[],
+                      input_modalities: config.input_modalities as unknown as readonly string[],
+                      output_modalities: config.output_modalities as unknown as readonly string[],
+                    });
+                    return <div className="model-provider-model-row-wrap" key={model}>
+                    <div className="model-provider-model-row">
+                      <code className="model-provider-model-id" title={model} data-origin={config.origin ?? "user"}><span className="model-provider-model-id-text">{model}</span>{config.origin === "product" && <em className="model-provider-model-origin" title={zh ? "内置模型：随 OpenDrSai 更新，只能停用" : "Built-in model: updates with OpenDrSai and can only be disabled"}>{zh ? "内置" : "Built-in"}</em>}<ModelFamilyBadge family={family} zh={zh} /></code>
+                      <button type="button" className={`model-provider-model-alias ${config.alias ? "" : "is-placeholder"}`} data-testid={`model-provider-model-alias-${model}`} title={zh ? "点击编辑别名" : "Click to edit alias"} onClick={() => switchDirectModel(model)}>{config.alias || model}</button>
+                      <div className="model-modality-directional"><ModelModalityBadges zh={zh} direction="input" modalities={config.input_modalities} onClick={() => switchDirectModel(model)} /><span className="model-modality-separator" aria-hidden>→</span><ModelModalityBadges zh={zh} direction="output" modalities={config.output_modalities} onClick={() => switchDirectModel(model)} /></div>
+                      <ModelApiProtocolBadge protocol={config.api_protocol} zh={zh} onClick={() => switchDirectModel(model)} />
+                      <div className="model-provider-model-operations" data-testid={`model-provider-model-operations-${model}`}>
+                        <label className="model-provider-model-enabled" title={config.enabled ? (zh ? "点击停用" : "Click to disable") : (zh ? "点击启用" : "Click to enable")}><input type="checkbox" checked={config.enabled} onChange={(event) => { const enabled = event.target.checked; setProviderModelConfigsDraft((current) => ({ ...current, [model]: { ...config, enabled } })); if (!enabled && modelDraft === model) { const fallback = providerModelsDraft.find((candidate) => candidate !== model && (providerModelConfigsDraft[candidate]?.enabled ?? true)); setModelDraft(fallback ?? ""); } else if (enabled && !modelDraft) setModelDraft(model); }} aria-label={zh ? `${config.enabled ? "停用" : "启用"}模型 ${model}` : `${config.enabled ? "Disable" : "Enable"} model ${model}`} /><span aria-hidden /></label>
+                        <button type="button" className="model-provider-model-action" data-testid={`model-provider-model-edit-${model}`} title={zh ? "编辑模型信息" : "Edit model information"} aria-label={zh ? `编辑模型 ${model}` : `Edit model ${model}`} onClick={() => switchDirectModel(model)}><Pencil size={14} aria-hidden /></button>
+                        <button type="button" className="model-provider-model-action" data-testid={`model-provider-model-copy-${model}`} title={zh ? "复制模型" : "Copy model"} aria-label={zh ? `复制模型 ${model}` : `Copy model ${model}`} onClick={() => duplicateProviderModel(model)}><Copy size={14} aria-hidden /></button>
+                        <details className="model-provider-capability-test-menu"><summary title={zh ? "测试单项能力" : "Test a capability"}>{zh ? "测试" : "Test"}</summary><div>{probeOperations.length ? probeOperations.map((operation) => { const key = `${providerDraft.trim()}:${model}:${operation}`; const result = modelCapabilityResults[key]; return <button key={operation} type="button" disabled={modelProviderDirty || modelConfigBusy || !config.enabled || runningModelCapability !== null} title={modelProviderDirty ? (zh ? "请先保存提供方，再测试已保存模型能力" : "Save provider before probing saved model capabilities") : undefined} onClick={() => void probeProviderModelCapability(model, operation)}>{runningModelCapability === key ? (zh ? "测试中…" : "Testing…") : operation}{result && !modelProviderDirty ? <small className={result.status}>{result.status === "verified" ? (zh ? "已验证" : "Verified") : result.error_code || result.status}</small> : null}</button>; }) : <small>{zh ? "请先声明能力" : "Declare capabilities first."}</small>}</div></details>
+                        <button type="button" className="model-provider-model-remove" disabled={modelConfigBusy} title={selectedProviderConfig?.model_configs?.[model] ? (config.origin === "product" ? (zh ? "预检引用后停用内置模型" : "Check references, then disable this built-in model") : (zh ? "预检引用后删除此模型" : "Check references, then delete only this model")) : (zh ? "移除未保存草稿" : "Remove unsaved draft")} aria-label={zh ? `${config.origin === "product" ? "停用" : "删除"}模型 ${model}` : `${config.origin === "product" ? "Disable" : "Delete"} model ${model}`} onClick={() => selectedProviderConfig?.model_configs?.[model] ? void deleteSavedProviderModel(model) : removeProviderModel(model)}><Trash2 size={14} aria-hidden /></button>
+                      </div>
+                    </div>
+                    {probeOperations.map((operation) => { const result = modelCapabilityResults[`${providerDraft.trim()}:${model}:${operation}`]; return result && !modelProviderDirty ? <div className={`model-provider-capability-result ${result.status}`} key={`${model}:${operation}:result`}><strong>{operation}</strong><span>{result.status === "verified" ? (zh ? "已验证" : "Verified") : result.error_code || result.status}</span><small>{result.protocol} · {result.duration_ms} ms</small></div> : null; })}
+                    </div>;
+                  })())}
+                </div>
+                </details>
+              </div>
+              <details className="model-provider-advanced" data-testid="model-provider-endpoints">
+                <summary>{zh ? "高级连接设置 · 名称与多协议" : "Advanced connection · name and protocols"}</summary>
+                <div className="model-provider-grid">
+                <label><span>{zh ? "提供方名称（保存标识）" : "Provider name (saved identifier)"}</span><input data-testid="model-provider-name" value={providerDraft} readOnly={usesOidcProviderAuth} onChange={(event) => setProviderDraft(event.target.value)} placeholder="custom" /></label>
+                </div>
+                {!usesOidcProviderAuth && <label className="model-provider-hint"><input type="checkbox" data-testid="model-provider-keyless" checked={keySourceDraft === "none"} onChange={(event) => { setKeySourceDraft(event.target.checked ? "none" : "secure"); if (event.target.checked) setApiKeyDraft(""); }} />{zh ? "此服务无需 API Key（仅在服务商明确说明时勾选）" : "This service needs no API key (only if confirmed by the provider)"}</label>}
                 <div className="model-provider-endpoints-header"><h3>{zh ? "主机与协议" : "Hosts and protocols"}</h3><button type="button" aria-label={zh ? "添加协议主机" : "Add protocol host"} title={zh ? "添加协议主机" : "Add protocol host"} disabled={(wireApiDraft === "anthropic" || Boolean(anthropicBaseUrlDraft) || addedProviderProtocols.has("anthropic")) && (wireApiDraft === "gemini" || Boolean(geminiBaseUrlDraft) || addedProviderProtocols.has("gemini"))} onClick={() => setAddedProviderProtocols((current) => { const next = new Set(current); if (wireApiDraft !== "anthropic" && !anthropicBaseUrlDraft && !next.has("anthropic")) next.add("anthropic"); else if (wireApiDraft !== "gemini" && !geminiBaseUrlDraft && !next.has("gemini")) next.add("gemini"); return next; })}>＋</button></div>
-                <div className="model-provider-endpoint-row model-provider-endpoint-default">
+                <div className="model-provider-grid">
                   <label><span>{zh ? "API 协议" : "API protocol"}</span><select value={wireApiDraft} disabled={usesOidcProviderAuth} onChange={(event) => setWireApiDraft(event.target.value as MyDrSaiModelApiProtocol)}><option value="openai">OpenAI API</option><option value="anthropic">Anthropic API</option><option value="gemini">Google API</option></select></label>
-                  <label><span>{zh ? "API 主机" : "API host"}</span><input data-testid="model-provider-api-host" value={baseUrlDraft} readOnly={usesOidcProviderAuth} onChange={(event) => setBaseUrlDraft(event.target.value)} placeholder="https://api.example.com/v1" /></label>
+
                   <span className="model-provider-endpoint-action-spacer" aria-hidden="true" />
                 </div>
                 {(Boolean(anthropicBaseUrlDraft) || addedProviderProtocols.has("anthropic")) && wireApiDraft !== "anthropic" && <div className="model-provider-endpoint-row">
@@ -2258,97 +2620,32 @@ export function SettingsPanel({
                   <label><span>{zh ? "API 主机" : "API host"}</span><input data-testid="model-provider-gemini-api-host" value={geminiBaseUrlDraft} onChange={(event) => setGeminiBaseUrlDraft(event.target.value)} placeholder="https://api.example.com/google" /></label>
                   <button type="button" className="model-provider-endpoint-remove" aria-label={zh ? "移除 Google API 主机" : "Remove Google API host"} onClick={() => { setGeminiBaseUrlDraft(""); setAddedProviderProtocols((current) => { const next = new Set(current); next.delete("gemini"); return next; }); }}>−</button>
                 </div>}
-              </section>
-              <div className="model-provider-models" data-testid="model-provider-models">
-                <div className="model-provider-models-header">
-                  <div><h3>{zh ? "模型" : "Models"}</h3><small>{zh ? "可为模型设置显示别名；留空时使用原模型名称。" : "Set an optional display alias; an empty alias uses the original model name."}</small></div>
-                  <div><button type="button" onClick={addProviderModel}>＋ {zh ? "新建" : "New"}</button><button type="button" onClick={resetProviderModels}>↶ {zh ? "重置" : "Reset"}</button><button type="button" title={!providerDiscoveryCredentialReady ? (zh ? "请先输入并保存 API Key" : "Enter and save an API Key first") : (zh ? "发现模型" : "Discover models")} disabled={modelConfigBusy || !providerDraft.trim() || !baseUrlDraft.trim() || !providerDiscoveryCredentialReady} onClick={() => void discoverModels()}>↻ {zh ? "获取" : "Fetch"}</button></div>
-                </div>
-                {selectedProviderConfig?.user_models_error && <p className="model-provider-hint model-provider-hint-warning" data-testid="model-provider-user-models-error">{zh ? `你的模型文件无法读取，本次仅内置模型生效。请修复或删除该文件后重试：${selectedProviderConfig.user_models_error}` : `Your model file could not be read, so only the built-in models are active. Fix or delete it and try again: ${selectedProviderConfig.user_models_error}`}</p>}
-                {(selectedProviderConfig?.shadowed_models?.length ?? 0) > 0 && <p className="model-provider-hint model-provider-hint-warning" data-testid="model-provider-shadowed-models">{zh ? `这些自定义模型与内置模型重名，已改用内置定义：${(selectedProviderConfig?.shadowed_models ?? []).join("、")}。请改用新的模型 ID。` : `These custom models share a built-in ID, so the built-in definition is used: ${(selectedProviderConfig?.shadowed_models ?? []).join(", ")}. Use a new model ID instead.`}</p>}
-                {selectedProviderConfig?.origin === "product" && <p className="model-provider-hint" data-testid="model-provider-product-origin-hint">{zh ? "内置模型的名称、模态与数值由 OpenDrSai 维护并随版本更新，只能停用；如需调整请用“复制模型”生成你自己的模型。" : "Built-in model names, modalities, and numbers are maintained by OpenDrSai and update with the app, so they can only be disabled. Use “Copy model” to make an editable copy."}</p>}
-                <datalist id="discovered-model-options">{discoveredModels.map((model) => <option key={model} value={model} />)}</datalist>
-                <div className="model-provider-model-list">
-                  <div className="model-provider-model-table-header" role="row">
-                    <span>{zh ? "模型 ID" : "Model ID"}</span>
-                    <span>{zh ? "别名" : "Alias"}</span>
-                    <span>{zh ? "输入与输出模态" : "Input and output modalities"}</span>
-                    <span>{zh ? "API 协议" : "API protocol"}</span>
-                    <span>{zh ? "操作" : "Actions"}</span>
-                  </div>
-                  {providerModelsDraft.length === 0 && newProviderModelDraft === null ? <p>{zh ? "尚未添加模型。可以手工新建，或从提供方获取。" : "No models yet. Add one manually or fetch from the provider."}</p> : providerModelsDraft.map((model) => {
-                    const config = providerModelConfigsDraft[model] ?? providerModelConfigFor(model, { wire_api: wireApiDraft, model_aliases: providerModelAliasesDraft, model_operations: providerModelOperationsDraft });
-                    const probeOperations = config.capabilities.filter((capability) => ["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "speech_to_text", "text_to_speech"].includes(capability)) as import("@shared/desktopApi").ModelCapabilityProbeOperation[];
-                    return <div className="model-provider-model-row-wrap" key={model}>
-                    <div className="model-provider-model-row">
-                      <code className="model-provider-model-id" title={model} data-origin={config.origin ?? "user"}><span className="model-provider-model-id-text">{model}</span>{config.origin === "product" && <em className="model-provider-model-origin" title={zh ? "内置模型：随 OpenDrSai 更新，只能停用" : "Built-in model: updates with OpenDrSai and can only be disabled"}>{zh ? "内置" : "Built-in"}</em>}</code>
-                      <button type="button" className={`model-provider-model-alias ${config.alias ? "" : "is-placeholder"}`} data-testid={`model-provider-model-alias-${model}`} title={zh ? "点击编辑别名" : "Click to edit alias"} onClick={() => openProviderModelEditor(model)}>{config.alias || model}</button>
-                      <div className="model-modality-directional"><ModelModalityBadges zh={zh} direction="input" modalities={config.input_modalities} onClick={() => openProviderModelEditor(model)} /><span className="model-modality-separator" aria-hidden>→</span><ModelModalityBadges zh={zh} direction="output" modalities={config.output_modalities} onClick={() => openProviderModelEditor(model)} /></div>
-                      <ModelApiProtocolBadge protocol={config.api_protocol} zh={zh} onClick={() => openProviderModelEditor(model)} />
-                      <div className="model-provider-model-operations" data-testid={`model-provider-model-operations-${model}`}>
-                        <label className="model-provider-model-enabled" title={config.enabled ? (zh ? "点击停用" : "Click to disable") : (zh ? "点击启用" : "Click to enable")}><input type="checkbox" checked={config.enabled} onChange={(event) => { const enabled = event.target.checked; setProviderModelConfigsDraft((current) => ({ ...current, [model]: { ...config, enabled } })); if (!enabled && modelDraft === model) { const fallback = providerModelsDraft.find((candidate) => candidate !== model && (providerModelConfigsDraft[candidate]?.enabled ?? true)); setModelDraft(fallback ?? ""); } else if (enabled && !modelDraft) setModelDraft(model); }} aria-label={zh ? `${config.enabled ? "停用" : "启用"}模型 ${model}` : `${config.enabled ? "Disable" : "Enable"} model ${model}`} /><span aria-hidden /></label>
-                        <button type="button" className="model-provider-model-action" data-testid={`model-provider-model-edit-${model}`} title={zh ? "编辑模型信息" : "Edit model information"} aria-label={zh ? `编辑模型 ${model}` : `Edit model ${model}`} onClick={() => openProviderModelEditor(model)}><Pencil size={14} aria-hidden /></button>
-                        <button type="button" className="model-provider-model-action" data-testid={`model-provider-model-copy-${model}`} title={zh ? "复制模型" : "Copy model"} aria-label={zh ? `复制模型 ${model}` : `Copy model ${model}`} onClick={() => duplicateProviderModel(model)}><Copy size={14} aria-hidden /></button>
-                        <details className="model-provider-capability-test-menu"><summary title={zh ? "测试单项能力" : "Test a capability"}>{zh ? "测试" : "Test"}</summary><div>{probeOperations.length ? probeOperations.map((operation) => { const key = `${model}:${operation}`; const result = modelCapabilityResults[key]; return <button key={operation} type="button" disabled={!config.enabled || runningModelCapability === key} onClick={() => void probeProviderModelCapability(model, operation)}>{runningModelCapability === key ? (zh ? "测试中…" : "Testing…") : operation}{result ? <small className={result.status}>{result.status === "verified" ? (zh ? "已验证" : "Verified") : result.error_code || result.status}</small> : null}</button>; }) : <small>{zh ? "请先声明能力" : "Declare capabilities first."}</small>}</div></details>
-                        <button type="button" className="model-provider-model-remove" title={zh ? "删除模型" : "Delete model"} aria-label={zh ? `移除模型 ${model}` : `Remove model ${model}`} onClick={() => removeProviderModel(model)}><Trash2 size={14} aria-hidden /></button>
-                      </div>
-                    </div>
-                    {probeOperations.map((operation) => { const result = modelCapabilityResults[`${model}:${operation}`]; return result ? <div className={`model-provider-capability-result ${result.status}`} key={`${model}:${operation}:result`}><strong>{operation}</strong><span>{result.status === "verified" ? (zh ? "已验证" : "Verified") : result.error_code || result.status}</span><small>{result.protocol} · {result.duration_ms} ms</small></div> : null; })}
-                    </div>;
-                  })}
-                  {newProviderModelDraft !== null && <div className="model-provider-model-row model-provider-model-new" data-testid="model-provider-model-new">
-                    <input autoFocus data-testid="model-provider-model-new-input" value={newProviderModelDraft} maxLength={256} placeholder={zh ? "输入模型 ID" : "Enter model ID"} onChange={(event) => setNewProviderModelDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitProviderModel(); } else if (event.key === "Escape") setNewProviderModelDraft(null); }} />
-                    <span /><span /><span />
-                    <div><button type="button" data-testid="model-provider-model-new-confirm" aria-label={zh ? "添加模型" : "Add model"} onClick={commitProviderModel}>✓</button><button type="button" aria-label={zh ? "取消新建模型" : "Cancel new model"} onClick={() => setNewProviderModelDraft(null)}>×</button></div>
-                  </div>}
-                </div>
-              </div>
-              {providerModelEditor && (() => {
-                const modalityOptions: MyDrSaiModelModality[] = ["text", "image", "audio", "video"];
-                const protocolOptions: Array<{ id: MyDrSaiModelApiProtocol; label: string }> = [{ id: "openai", label: "OpenAI" }, { id: "anthropic", label: "Anthropic" }, { id: "gemini", label: "Gemini" }];
-                const capabilityOptions: MyDrSaiModelCapability[] = ["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "speech_to_text", "text_to_speech", "video_generation"];
-                // A built-in entry may only be switched on or off here: OpenDrSai
-                // regenerates its catalog file on every launch, so every other field
-                // is read-only and customisation goes through "Copy model".
-                const productModel = providerModelEditor.origin === "product";
-                return <div className="model-provider-delete-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProviderModelEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setProviderModelEditor(null); }}>
-                  <section className="model-provider-model-editor" role="dialog" aria-modal="true" aria-labelledby="model-provider-model-editor-title" data-testid="model-provider-model-editor">
-                    <header><div><h2 id="model-provider-model-editor-title">{zh ? "编辑模型信息" : "Edit model information"}</h2><p>{zh ? "这些设置按模型保存到配置文件中，并由 Runtime 直接使用。" : "These settings are stored per model in configuration files and consumed directly by the Runtime."}</p></div></header>
-                    {productModel && <p className="model-provider-hint model-provider-hint-warning" data-testid="model-provider-model-editor-product-notice">{zh ? "这是内置模型：名称、模态、协议、能力与数值由 OpenDrSai 维护并随版本更新，此处只能切换启用状态。如需调整，请先“复制模型”再修改副本。" : "This is a built-in model: OpenDrSai maintains its name, modalities, protocol, capabilities, and numbers, and updates them with the app, so only the enabled state can change here. Use “Copy model” first to adjust a copy."}</p>}
-                    <div className="model-provider-model-editor-grid">
-                      <label><span>{zh ? "模型 ID" : "Model ID"}</span><input autoFocus value={providerModelEditor.modelId} maxLength={256} disabled={productModel} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, modelId: event.target.value } : current); setProviderModelEditorError(null); }} /></label>
-                      <label><span>{zh ? "别名" : "Alias"}</span><input value={providerModelEditor.alias} maxLength={256} placeholder={providerModelEditor.modelId} disabled={productModel} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, alias: event.target.value } : current)} /></label>
-                      <fieldset disabled={productModel}><legend>{zh ? "输入模态" : "Input modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.inputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("input", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
-                      <fieldset disabled={productModel}><legend>{zh ? "输出模态" : "Output modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.outputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("output", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
-                      <fieldset disabled={productModel}><legend>{zh ? "API 协议" : "API protocol"}</legend><div className="model-provider-capability-options">{protocolOptions.map((protocol) => <label key={protocol.id}><input type="radio" name="model-api-protocol" checked={providerModelEditor.apiProtocol === protocol.id} onChange={() => setProviderModelEditor((current) => current ? { ...current, apiProtocol: protocol.id } : current)} /><span>{protocol.label}</span></label>)}</div></fieldset>
-                      <label><span>{zh ? "上下文长度（token）" : "Context window (tokens)"}</span><input inputMode="numeric" maxLength={9} value={providerModelEditor.tokenLimit} placeholder={zh ? "留空使用内置默认值" : "Empty uses the built-in default"} disabled={productModel} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, tokenLimit: event.target.value } : current); setProviderModelEditorError(null); }} /><small data-testid="model-provider-model-editor-token-limit-hint">{zh ? "1 到 100000000 之间的整数；留空表示沿用模型注册表中的默认值。" : "An integer from 1 to 100000000; empty keeps the default from the model registry."}</small></label>
-                      <label><span>{zh ? "最大输出（token）" : "Max output (tokens)"}</span><input inputMode="numeric" maxLength={9} value={providerModelEditor.maxTokens} placeholder={zh ? "留空使用内置默认值" : "Empty uses the built-in default"} disabled={productModel} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, maxTokens: event.target.value } : current); setProviderModelEditorError(null); }} /><small data-testid="model-provider-model-editor-max-tokens-hint">{zh ? "不能大于上下文长度；留空同样沿用内置默认值。" : "Cannot exceed the context window; empty also keeps the built-in default."}</small></label>
-                      <fieldset className="model-provider-model-editor-wide" disabled={productModel || !providerModelEditor.capabilities.includes("reasoning")}><legend>{zh ? "推理强度" : "Reasoning efforts"}</legend><div className="model-provider-capability-options">{PROVIDER_REASONING_EFFORT_OPTIONS.map((effort) => <label key={effort}><input type="checkbox" checked={providerModelEditor.reasoningEfforts.includes(effort)} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, reasoningEfforts: nextProviderReasoningEfforts(current.reasoningEfforts, effort, event.target.checked) } : current)} /><span>{effort}</span></label>)}</div><small data-testid="model-provider-model-editor-reasoning-hint">{providerModelEditor.capabilities.includes("reasoning") ? (zh ? "声明该模型可用的推理强度，用于界面取值；全部留空表示沿用内置默认值。" : "Declare the reasoning efforts this model offers so the UI can pick one. Leave all unchecked to keep the built-in default.") : (zh ? "请先勾选“能力”中的 reasoning。" : "Select the reasoning capability above first.")}</small></fieldset>
-                      <fieldset className="model-provider-model-editor-wide" disabled={productModel}><legend>{zh ? "能力" : "Capabilities"}</legend><div className="model-provider-capability-options">{capabilityOptions.map((capability) => <label key={capability}><input type="checkbox" checked={providerModelEditor.capabilities.includes(capability)} onChange={(event) => toggleProviderModelEditorCapability(capability, event.target.checked)} /><span>{capability}</span></label>)}</div></fieldset>
-                      <label className="model-provider-model-editor-enabled"><input type="checkbox" checked={providerModelEditor.enabled} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, enabled: event.target.checked } : current)} /><span>{zh ? "启用此模型" : "Enable this model"}</span></label>
-                    </div>
-                    {providerModelEditorError && <p className="settings-message" role="alert">{providerModelEditorError}</p>}
-                    <footer className="model-provider-delete-actions"><button type="button" onClick={() => setProviderModelEditor(null)}>{zh ? "取消" : "Cancel"}</button><button type="button" data-testid="model-provider-model-editor-save" onClick={saveProviderModelEditor}>{zh ? "保存" : "Save"}</button></footer>
-                  </section>
-                </div>;
-              })()}
+              </details>
               {myDrSaiConfig?.modelConnection?.model_provider === activeModelProviderTab && myDrSaiConfig.modelConnection.metadata?.known_model === false && <p className="model-provider-hint" data-testid="model-provider-unknown-model-warning">{zh ? "该模型未登记，能力参数尚未校准；将使用安全的通用默认值。" : "This model is not registered; capabilities are uncalibrated and safe generic defaults will be used."}</p>}
-              <div className="model-provider-actions"><button type="button" className="model-provider-button-primary" data-testid="model-provider-save" disabled={modelConfigBusy || !modelProviderDirty || !providerDraft.trim() || !baseUrlDraft.trim()} onClick={() => void saveModelProvider()}>{modelConfigBusy ? (zh ? "处理中…" : "Working…") : (zh ? "保存提供方" : "Save provider")}</button><button type="button" disabled={modelConfigBusy || !providerDraft.trim()} data-testid="model-provider-test-basic" onClick={() => void testModelConnection("basic")}>{zh ? "检查连接" : "Check connection"}</button><button type="button" disabled={modelConfigBusy || !modelDraft.trim() || !providerDraft.trim()} data-testid="model-provider-test-model" onClick={() => setModelTestConfirmationOpen(true)}>{zh ? "测试模型调用" : "Test model call"}</button><button type="button" className="model-provider-button-danger" disabled={modelConfigBusy || providerDraft === "hepai"} onClick={requestModelProviderDeletion}>{zh ? "删除 Provider" : "Delete Provider"}</button>{myDrSaiConfig?.modelConnection?.path && <button type="button" className="model-provider-button-quiet" onClick={() => onOpenPath(myDrSaiConfig.modelConnection!.path!)}>{zh ? "打开配置文件" : "Open config"}</button>}</div>
-              {modelConfigMessage && <div className="settings-message">{modelConfigMessage}{modelConfigConflict && <button type="button" data-testid="model-provider-conflict-reload" disabled={modelConfigBusy} onClick={() => void reloadModelConnectionAfterConflict()}>{zh ? "重新加载配置" : "Reload configuration"}</button>}</div>}
+              <p className="model-provider-hint" data-testid="model-provider-save-guidance">{zh ? "测试并保存会进行可能收费的真实对话调用，成功后才保存当前表单与其他模型草稿；不切换主模型。此调用不验证工具或多模态能力。" : "Test and save makes a potentially billable chat call, then saves this form and other model drafts only on success. It does not switch the primary model or verify tools/multimodal capabilities."}</p>
+              {providerSetupIssue && <p className="model-provider-hint" id="model-provider-setup-issue" role="status">{providerSetupIssue}</p>}
+              <div className="model-provider-actions">
+                <button type="button" className="model-provider-button-primary" data-testid="model-provider-test-save" disabled={modelConfigBusy || Boolean(providerSetupIssue) || !providerModelEditor?.enabled || !providerModelEditor.capabilities.includes("chat") || providerModelEditor.capabilities.includes("image_generation")} onClick={() => setModelTestConfirmationOpen(true)}>{zh ? "测试并保存" : "Test and save"}</button>
+                <button type="button" className="model-provider-button-quiet" data-testid="model-provider-save" disabled={modelConfigBusy || Boolean(providerSetupIssue) || !modelProviderDirty} onClick={() => void saveModelProvider(false)}>{zh ? "仅保存（未验证）" : "Save only (unverified)"}</button>
+              </div>
+              {modelConfigMessage && <div className="settings-message" role="status" aria-live="polite">{modelConfigMessage}{modelConfigConflict && <button type="button" data-testid="model-provider-conflict-reload" disabled={modelConfigBusy} onClick={() => void reloadModelConnectionAfterConflict()}>{zh ? "重新加载配置" : "Reload configuration"}</button>}</div>}
               {modelTestOutput && <div className="model-provider-test-output" data-testid="model-provider-test-output" role="status" aria-live="polite"><span>{zh ? "模型回复" : "Model reply"}</span><pre>{modelTestOutput}</pre></div>}
+              </fieldset>
             </section>
-            <section className="settings-section model-provider-recovery" data-testid="model-provider-recovery">
+            <details className="settings-section model-provider-recovery model-provider-advanced" data-testid="model-provider-recovery">
+              <summary>{zh ? "高级工具 · 检查、诊断、配置文件与删除" : "Advanced tools · checks, diagnosis, config and deletion"}</summary>
+              <div className="model-provider-actions"><button type="button" disabled={runningModelCapability !== null || modelConfigBusy || !providerDraft.trim()} data-testid="model-provider-test-basic" onClick={() => void testModelConnection("basic")}>{zh ? "检查连接" : "Check connection"}</button><button type="button" className="model-provider-button-danger" disabled={runningModelCapability !== null || modelConfigBusy || !selectedProviderConfigured || providerDraft === "hepai"} onClick={requestModelProviderDeletion}>{zh ? "删除提供方" : "Delete provider"}</button>{myDrSaiConfig?.modelConnection?.path && <button type="button" className="model-provider-button-quiet" onClick={() => onOpenPath(myDrSaiConfig.modelConnection!.path!)}>{zh ? "打开配置文件" : "Open config"}</button>}</div>
               <div>
                 <h3>{zh ? "模型配置诊断与恢复" : "Model configuration diagnosis and recovery"}</h3>
                 <p>{zh ? "检查配置、凭据和最后可用快照；在线检查会真实调用当前模型。" : "Check configuration, credentials, and the last-known-good snapshot. Online diagnosis calls the current model."}</p>
               </div>
               <div className="model-provider-actions">
-                <button type="button" disabled={modelConfigBusy} data-testid="model-provider-doctor" onClick={() => void runModelDoctor(false)}>{zh ? "运行检查" : "Run Doctor"}</button>
-                <button type="button" className="model-provider-button-accent" disabled={modelConfigBusy} data-testid="model-provider-doctor-online" onClick={() => void runModelDoctor(true)}>{zh ? "在线检查" : "Online check"}</button>
-                <button type="button" className="model-provider-button-quiet" disabled={modelConfigBusy || modelDoctorResult?.last_known_good_available !== true} data-testid="model-provider-restore-last-good" onClick={() => void restoreLastKnownGoodModelConnection()}>{zh ? "恢复最后可用配置" : "Restore last-known-good"}</button>
+                <button type="button" disabled={runningModelCapability !== null || modelConfigBusy} data-testid="model-provider-doctor" onClick={() => void runModelDoctor(false)}>{zh ? "运行检查" : "Run Doctor"}</button>
+                <button type="button" className="model-provider-button-accent" disabled={runningModelCapability !== null || modelConfigBusy} data-testid="model-provider-doctor-online" onClick={() => void runModelDoctor(true)}>{zh ? "在线检查" : "Online check"}</button>
+                <button type="button" className="model-provider-button-quiet" disabled={runningModelCapability !== null || modelConfigBusy || modelDoctorResult?.last_known_good_available !== true} data-testid="model-provider-restore-last-good" onClick={() => void restoreLastKnownGoodModelConnection()}>{zh ? "恢复最后可用配置" : "Restore last-known-good"}</button>
               </div>
               {modelDoctorResult && <ul data-testid="model-provider-doctor-result">{modelDoctorResult.checks.map((check) => <li key={check.id} data-status={check.status}><strong>{check.id}</strong><span>{check.message}</span></li>)}</ul>}
-            </section>
+            </details>
             {providerPendingDeletion && (
               <div className="model-provider-delete-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !modelConfigBusy) { setProviderPendingDeletion(null); setProviderDeletePreflight(null); } }} onKeyDown={(event) => { if (event.key === "Escape" && !modelConfigBusy) { setProviderPendingDeletion(null); setProviderDeletePreflight(null); } }}>
                 <section className="model-provider-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="model-provider-delete-title" aria-describedby="model-provider-delete-description" data-testid="model-provider-delete-dialog">
@@ -2361,22 +2658,21 @@ export function SettingsPanel({
                     </div>
                   )}
                   <div className="model-provider-delete-actions">
-                    <button type="button" className="danger" disabled={modelConfigBusy || !providerDeletePreflight?.can_delete} data-testid="model-provider-delete-with-credential" onClick={() => void deleteModelProvider(true)}>{zh ? "删除 Provider 和凭据" : "Delete Provider and credential"}</button>
-                    <button type="button" disabled={modelConfigBusy || !providerDeletePreflight?.can_delete} data-testid="model-provider-delete-keep-credential" onClick={() => void deleteModelProvider(false)}>{zh ? "仅删除 Provider" : "Delete Provider only"}</button>
+                    <button type="button" className="danger" disabled data-testid="model-provider-delete-with-credential" title={zh ? "待引用检查" : "Pending reference checks"} onClick={() => void deleteModelProvider(true)}>{zh ? "删除 Provider 和凭据（待引用检查）" : "Delete Provider and credential (pending checks)"}</button>
+                    <button type="button" disabled data-testid="model-provider-delete-keep-credential" title={zh ? "待引用检查" : "Pending reference checks"} onClick={() => void deleteModelProvider(false)}>{zh ? "仅删除 Provider（待引用检查）" : "Delete Provider only (pending checks)"}</button>
                     <button type="button" autoFocus disabled={modelConfigBusy} data-testid="model-provider-delete-cancel" onClick={() => { setProviderPendingDeletion(null); setProviderDeletePreflight(null); }}>{zh ? "取消" : "Cancel"}</button>
                   </div>
                 </section>
               </div>
             )}
+            </>}
             {modelTestConfirmationOpen && (
               <div className="model-provider-delete-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !modelConfigBusy) setModelTestConfirmationOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape" && !modelConfigBusy) setModelTestConfirmationOpen(false); }}>
                 <section className="model-provider-test-dialog" role="dialog" aria-modal="true" aria-labelledby="model-provider-test-title" aria-describedby="model-provider-test-description" data-testid="model-provider-test-dialog">
-                  <h2 id="model-provider-test-title">{zh ? `调用模型“${modelDraft.trim()}”？` : `Call model “${modelDraft.trim()}”?`}</h2>
-                  <p id="model-provider-test-description">{modelProviderDirty
-                    ? (zh ? "这会向服务商发送一次最小模型请求，可能产生少量费用。当前有未保存更改，因此只测试草稿，不会更新运行状态。" : "This sends one minimal request and may incur a small charge. Because there are unsaved changes, it tests only the draft and does not update runtime status.")
-                    : (zh ? "这会向服务商发送一次最小模型请求，可能产生少量费用。成功后会把当前已保存配置标记为已验证。" : "This sends one minimal request and may incur a small charge. Success marks the current saved configuration as verified.")}</p>
+                  <h2 id="model-provider-test-title">{zh ? `测试并保存“${providerModelEditor?.modelId.trim()}”？` : `Test and save “${providerModelEditor?.modelId.trim()}”?`}</h2>
+                  <p id="model-provider-test-description">{zh ? "将发送可能收费的最小对话请求。只有调用成功才保存当前表单；失败不保存。其他模型、工具与多模态能力未经此次验证，不切换主模型。" : "Sends a potentially billable minimal chat request. Saves this form only after success; failure does not save. Other models, tools and multimodal abilities are not verified, and the primary model is unchanged."}</p>
                   <div className="model-provider-delete-actions">
-                    <button type="button" disabled={modelConfigBusy} data-testid="model-provider-test-model-confirm" onClick={() => void testModelConnection("model")}>{modelConfigBusy ? (zh ? "测试中…" : "Testing…") : (zh ? "确认并测试" : "Confirm and test")}</button>
+                    <button type="button" disabled={modelConfigBusy} data-testid="model-provider-test-model-confirm" onClick={() => void saveModelProvider(true)}>{modelConfigBusy ? (zh ? "测试中…" : "Testing…") : (zh ? "确认测试并保存" : "Confirm test and save")}</button>
                     <button type="button" autoFocus disabled={modelConfigBusy} data-testid="model-provider-test-model-cancel" onClick={() => setModelTestConfirmationOpen(false)}>{zh ? "取消" : "Cancel"}</button>
                   </div>
                 </section>
@@ -2425,6 +2721,57 @@ export function SettingsPanel({
                     </button>
                   ))}
                 </div>
+              </div>
+              <div className="settings-row color-palette-row">
+                <span>
+                  <strong>{zh ? "系统配色" : "Color palette"}</strong>
+                  <small>{zh ? "整站主色与氛围；可随时切换，立即生效。" : "System-wide accent and atmosphere. Switches apply instantly."}</small>
+                </span>
+                <div className="color-palette-grid" role="listbox" aria-label={zh ? "系统配色" : "Color palette"}>
+                  {visibleColorPalettes.map((palette) => {
+                    const active = colorPalette === palette.id;
+                    return (
+                      <button
+                        key={palette.id}
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        className={`color-palette-card${active ? " active" : ""}`}
+                        onClick={() => onColorPaletteChange(palette.id)}
+                      >
+                        <div className="color-palette-swatches" aria-hidden>
+                          <span style={{ background: palette.swatches.surface }} />
+                          <span style={{ background: palette.swatches.sidebar }} />
+                          <span style={{ background: palette.swatches.accent }} />
+                          <span style={{ background: palette.swatches.highlight }} />
+                          <span style={{ background: palette.swatches.text }} />
+                        </div>
+                        <strong>{zh ? palette.nameZh : palette.nameEn}</strong>
+                        <small>{zh ? palette.descZh : palette.descEn}</small>
+                      </button>
+                    );
+                  })}
+                </div>
+                {COLOR_PALETTES.length > FEATURED_COLOR_PALETTE_IDS.length ? (
+                  <button
+                    type="button"
+                    className="color-palette-more"
+                    aria-expanded={colorPalettesExpanded}
+                    onClick={() => setColorPalettesExpanded((open) => !open)}
+                  >
+                    {colorPalettesExpanded ? (
+                      <>
+                        <ChevronUp size={14} aria-hidden />
+                        {zh ? "收起" : "Show less"}
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown size={14} aria-hidden />
+                        {zh ? `更多配色（${hiddenColorPaletteCount}）` : `More palettes (${hiddenColorPaletteCount})`}
+                      </>
+                    )}
+                  </button>
+                ) : null}
               </div>
               <div className="settings-component-list">
                 <strong>{zh ? "左侧栏组件" : "Sidebar components"}</strong>
@@ -2608,6 +2955,23 @@ export function SettingsPanel({
               <div>
                 <h2>{zh ? "语音输入" : "Voice input"}</h2>
                 <p>{zh ? "只在点击麦克风后采集；停止后才提交整段音频进行识别。" : "Audio is captured only after clicking the microphone and submitted after recording stops."}</p>
+              </div>
+              <div className="settings-privacy-note" role="status" data-testid="voice-serial-stt-status" data-reason-code={serialSttBlock?.reasonCode ?? voiceRuntimeStatus?.reasonCode ?? "ready"}>
+                <strong>{zh ? "语音识别" : "Speech recognition"}</strong>
+                <p>{serialSttStatusMessage}</p>
+                {serialSttBlock ? (
+                  <div className="settings-actions">
+                    <button
+                      type="button"
+                      data-testid="voice-serial-stt-open-agent-settings"
+                      disabled={Boolean(agentDefaultsUnavailableReason)}
+                      title={agentDefaultsUnavailableReason ?? undefined}
+                      onClick={() => setActivePane("agent-defaults")}
+                    >
+                      {zh ? "打开智能体配置" : "Open Agent configuration"}
+                    </button>
+                  </div>
+                ) : null}
               </div>
               <label className="settings-toggle">
                 <span><strong>{zh ? "允许在线语音识别" : "Allow online transcription"}</strong><small>{zh ? "允许在停止录音后，将本次音频发送给当前配置的 Voice STT 服务。" : "Allow the recorded audio to be sent to the configured Voice STT provider after recording stops."}</small></span>
@@ -2828,23 +3192,6 @@ export function SettingsPanel({
           <>
             <header className="settings-content-header"><h2>{zh ? "记忆器配置" : "Memory configuration"}</h2><p>{zh ? "管理交互形成的用户、任务与情境状态。知识库继续保存外部事实与文档，两者生命周期相互独立。" : "Manage user, task, and situational state formed through interaction. Knowledge bases continue to hold external facts and documents with a separate lifecycle."}</p></header>
             <section className="settings-section settings-empty-state"><History size={25} /><strong>{zh ? "记忆器注册表将在下一阶段开放" : "Memory registry is coming next"}</strong><span>{zh ? "后续将提供存储范围、保留周期、自动召回、显式写入和加密状态；默认不会把大装置数据自动写入长期记忆。" : "The next stage adds storage scope, retention, automatic recall, explicit writes, and encryption status; facility data is never written to long-term memory by default."}</span></section>
-          </>
-        )}
-
-        {activePane === "agent-task" && (
-          <>
-            <header className="settings-content-header">
-              <h2>{zh ? "智能体任务" : "Agent tasks"}</h2>
-              <p>{zh ? "创建独立的智能体任务，并在会话中继续管理执行过程。" : "Create an isolated Agent task and manage its run from the conversation."}</p>
-            </header>
-            <section className="settings-section settings-action-section">
-              <Bot size={22} />
-              <div>
-                <h2>{zh ? "新建智能体任务" : "New Agent task"}</h2>
-                <p>{zh ? "基于当前工作区创建新的智能体任务会话。" : "Start a new Agent task for the current workspace."}</p>
-              </div>
-              <button type="button" onClick={onNewAgentTask}>{zh ? "创建任务" : "Create task"}</button>
-            </section>
           </>
         )}
 

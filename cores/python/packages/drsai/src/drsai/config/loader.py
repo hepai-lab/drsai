@@ -86,6 +86,11 @@ def _parse_provider(name: str, raw: Mapping[str, Any], *, source_path: str | Non
     requires_api_key = raw.get("requires_api_key")
     if requires_api_key is not None and not isinstance(requires_api_key, bool):
         raise ConfigError(f"model_providers.{name}.requires_api_key must be a boolean")
+    # Provider-wide default for OpenAI-protocol chat models. Omitted (None)
+    # keeps the historical per-model inference.
+    provider_use_responses = raw.get("use_responses_api")
+    if provider_use_responses is not None and not isinstance(provider_use_responses, bool):
+        raise ConfigError(f"model_providers.{name}.use_responses_api must be a boolean")
 
     anthropic_base_url = _optional_nonempty_string(raw, "anthropic_base_url", prefix=f"model_providers.{name}.")
     google_base_url = _optional_nonempty_string(raw, "google_base_url", prefix=f"model_providers.{name}.")
@@ -222,6 +227,10 @@ def _parse_provider(name: str, raw: Mapping[str, Any], *, source_path: str | Non
         raise ConfigError(
             f"model_providers.{name}.model_operations requires wire_api = 'openai'"
         )
+    if provider_use_responses is not None and wire_api_value not in {None, "openai"}:
+        raise ConfigError(
+            f"model_providers.{name}.use_responses_api requires wire_api = 'openai'"
+        )
     configured_sources = [value for value in (api_key, api_key_env, api_key_credential) if value is not None]
     if len(configured_sources) > 1:
         raise ConfigError(
@@ -244,6 +253,7 @@ def _parse_provider(name: str, raw: Mapping[str, Any], *, source_path: str | Non
         model_upstream_ids=model_upstream_ids,
         model_operations=model_operations,
         model_configs=model_configs,
+        use_responses_api=provider_use_responses,
         disabled_models=disabled_models,
         shadowed_models=shadowed_models,
         user_models_error=user_models_error,
@@ -321,6 +331,11 @@ def _optional_model_configs(value: object, *, default_protocol: str, prefix: str
                 output_modalities.append("video")
         protocol = raw_config.get("api_protocol", default_protocol)
         enabled = raw_config.get("enabled", True)
+        # Tri-state wire transport for OpenAI-protocol models. Omitted means
+        # "inherit the Provider default, then infer from the model name".
+        use_responses_api = raw_config.get("use_responses_api")
+        if use_responses_api is not None and not isinstance(use_responses_api, bool):
+            raise ConfigError(f"{prefix}.{model_id}.use_responses_api must be a boolean")
         upstream_id = raw_config.get("upstream_id")
         if legacy_modalities is not None and ("input_modalities" in raw_config or "output_modalities" in raw_config):
             raise ConfigError(f"{prefix}.{model_id} cannot mix modalities with input/output modalities")
@@ -336,6 +351,16 @@ def _optional_model_configs(value: object, *, default_protocol: str, prefix: str
             raise ConfigError(f"{prefix}.{model_id}.capabilities requires chat")
         if "image_generation" in capability_set and "image" not in output_set:
             raise ConfigError(f"{prefix}.{model_id}.image_generation requires image output")
+        # A media-generation model is not a chat model. The Desktop assigns
+        # models to roles (primary / image-understanding vs image-generation),
+        # and a model declaring both `chat` and `image_generation` would be
+        # offered in both pickers, then fail at runtime. Multimodal *input*
+        # models stay chat-only with `image` in input_modalities.
+        if {"image_generation", "image_edit"} & capability_set and {"chat", "tool_calling", "reasoning"} & capability_set:
+            raise ConfigError(
+                f"{prefix}.{model_id} cannot combine image generation with chat capabilities; "
+                "declare a chat/multimodal-input model or an image-generation model, not both"
+            )
         if "image_edit" in capability_set and not ({"image"} <= input_set and {"image"} <= output_set):
             raise ConfigError(f"{prefix}.{model_id}.image_edit requires image input and output")
         if "speech_to_text" in capability_set and not ({"audio"} <= input_set and {"text"} <= output_set):
@@ -366,9 +391,11 @@ def _optional_model_configs(value: object, *, default_protocol: str, prefix: str
             raise ConfigError(f"{prefix}.{model_id}.api_protocol is invalid")
         if not isinstance(enabled, bool):
             raise ConfigError(f"{prefix}.{model_id}.enabled must be a boolean")
+        if use_responses_api is not None and protocol != "openai":
+            raise ConfigError(f"{prefix}.{model_id}.use_responses_api requires api_protocol = 'openai'")
         if upstream_id is not None and (not isinstance(upstream_id, str) or not upstream_id.strip() or len(upstream_id) > 256):
             raise ConfigError(f"{prefix}.{model_id}.upstream_id is invalid")
-        result[model_id] = ProviderModelConfig(alias=alias.strip() if isinstance(alias, str) else None, input_modalities=tuple(input_modalities), output_modalities=tuple(output_modalities), api_protocol=protocol, enabled=enabled, capabilities=tuple(capabilities), upstream_id=upstream_id.strip() if isinstance(upstream_id, str) else None, token_limit=token_limit, max_tokens=max_tokens, reasoning_efforts=tuple(reasoning_efforts))  # type: ignore[arg-type]
+        result[model_id] = ProviderModelConfig(alias=alias.strip() if isinstance(alias, str) else None, input_modalities=tuple(input_modalities), output_modalities=tuple(output_modalities), api_protocol=protocol, enabled=enabled, capabilities=tuple(capabilities), upstream_id=upstream_id.strip() if isinstance(upstream_id, str) else None, token_limit=token_limit, max_tokens=max_tokens, reasoning_efforts=tuple(reasoning_efforts), use_responses_api=use_responses_api)  # type: ignore[arg-type]
     return result
 
 

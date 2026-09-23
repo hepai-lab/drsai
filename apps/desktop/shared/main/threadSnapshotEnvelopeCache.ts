@@ -32,6 +32,8 @@ export class ThreadSnapshotEnvelopeCache {
     const previous = this.entries.get(threadId);
     if (previous) this.bytes -= previous.bytes;
     const bytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+    // Map.set on an existing key does not refresh its LRU position.
+    this.entries.delete(threadId);
     this.entries.set(threadId, { value, bytes, touchedAt: Date.now(), pins: this.pinCounts.get(threadId) ?? 0, stale: false });
     this.bytes += bytes;
     this.evict();
@@ -59,10 +61,12 @@ export class ThreadSnapshotEnvelopeCache {
 
   private evict(): void {
     for (const [threadId, entry] of this.entries) {
-      const expired = !entry.pins && Date.now() - entry.touchedAt > this.ttlMs;
+      // A pinned head must not stop expiry of older inactive entries behind it.
+      if (entry.pins) continue;
+      const expired = Date.now() - entry.touchedAt > this.ttlMs;
       const overBudget = this.entries.size > this.maximumEntries || this.bytes > this.maximumBytes;
       if (!expired && !overBudget) break;
-      if (!entry.pins) this.remove(threadId);
+      this.remove(threadId);
     }
   }
 

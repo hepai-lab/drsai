@@ -8,6 +8,7 @@ import { installMockDesktopApi } from "./mockDesktopApi";
 import { installDebugLogCapture } from "./debugLogStore";
 import { installReactPerformanceMeasureGuard } from "./reactPerformanceGuard";
 import "./styles.css";
+import "./color-palettes.css";
 
 if (import.meta.env.DEV || new URLSearchParams(window.location.search).get("structuredVisualFixture") === "1") {
   installMockDesktopApi();

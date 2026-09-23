@@ -27,6 +27,7 @@ from __future__ import annotations
 from drsai.backend.desktop_gateway._diag import diag_log
 
 import asyncio
+import os
 import re
 from contextlib import nullcontext
 from typing import Any, Mapping
@@ -47,12 +48,75 @@ api = APIRouter(tags=["runs"])
 # Detached executions are kept referenced until they finish; without this the
 # event loop is free to garbage-collect a running task mid-turn.
 _EXECUTIONS: dict[str, asyncio.Task] = {}
+# run_id -> {"session_id", "started"} for the orphan-run reaper below.
+_EXECUTION_META: dict[str, dict[str, Any]] = {}
 _SELECTED_SKILL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _REMOTE_FILE_MAX_BYTES = 10 * 1024 * 1024
 _REMOTE_SKILL_CONTENT_MAX_BYTES = 512 * 1024
 # Full skill ZIP packages (scripts/assets) — the Skills Square download
 # endpoint caps are comparable; keep a generous but bounded inline limit.
 _REMOTE_SKILL_ZIP_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _env_seconds(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# An executing run whose session has had no live SSE subscriber for this long
+# is an orphan (desktop closed, renderer crashed) — cancel it so it stops
+# holding the turn lock and burning tokens nobody will ever read. Desktop
+# reconnects within seconds on session re-entry, which the default grace
+# comfortably covers.
+_ORPHAN_RUN_GRACE_SECONDS = _env_seconds("OPENDRSAI_ORPHAN_RUN_GRACE_SECONDS", 300.0)
+_ORPHAN_REAPER_INTERVAL_SECONDS = _env_seconds("OPENDRSAI_ORPHAN_REAPER_INTERVAL_SECONDS", 60.0)
+
+
+async def _reap_orphan_runs() -> None:
+    from .. import _stream_watchers
+
+    while True:
+        await asyncio.sleep(_ORPHAN_REAPER_INTERVAL_SECONDS)
+        for run_id, meta in list(_EXECUTION_META.items()):
+            task = _EXECUTIONS.get(run_id)
+            if task is None or task.done():
+                continue
+            session_id = str(meta.get("session_id") or "")
+            if not session_id:
+                continue
+            if _stream_watchers.has_watchers(session_id):
+                continue
+            # Only reap sessions that *had* a subscriber which then left: that
+            # is the crashed/closed-desktop signal. A run that never had a
+            # watcher (scripts, tests, other API clients) is left alone.
+            unwatched = _stream_watchers.unwatched_seconds(session_id)
+            if unwatched is None or unwatched < _ORPHAN_RUN_GRACE_SECONDS:
+                continue
+            try:
+                await _state.agent_service().cancel(run_id)
+                print(
+                    f"Orphan run {run_id} (session {session_id}) cancelled: "
+                    f"no stream subscriber for {unwatched:.0f}s"
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                print(f"Failed to cancel orphan run {run_id}: {type(exc).__name__}: {exc}")
+
+
+def start_orphan_reaper() -> asyncio.Task:
+    """Launch the orphan-run reaper once (idempotent per process)."""
+    global _REAPER_TASK
+    if _REAPER_TASK is None or _REAPER_TASK.done():
+        _REAPER_TASK = asyncio.create_task(_reap_orphan_runs())
+    return _REAPER_TASK
+
+
+_REAPER_TASK: asyncio.Task | None = None
 
 
 def _remote_payloads(metadata: Mapping[str, Any]) -> tuple[tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
@@ -310,6 +374,10 @@ async def run_execute(run_id: str, request: RunExecuteRequest, raw_request: Requ
 
     task = asyncio.create_task(execute())
     _EXECUTIONS[run_id] = task
+    _EXECUTION_META[run_id] = {
+        "session_id": str(engine.get_run(run_id)["session_id"]),
+        "started": asyncio.get_running_loop().time(),
+    }
     task.add_done_callback(lambda finished: _forget(run_id, finished))
     return JSONResponse(
         status_code=202,
@@ -325,6 +393,7 @@ def _forget(run_id: str, task: asyncio.Task) -> None:
     diag_log(f"[DIAG] _forget: run_id={run_id} task done, cancelled={task.cancelled()}, exception={task.exception() if not task.cancelled() else 'N/A'}")
     if _EXECUTIONS.get(run_id) is task:
         _EXECUTIONS.pop(run_id, None)
+    _EXECUTION_META.pop(run_id, None)
     if task.cancelled():
         return
     error = task.exception()
